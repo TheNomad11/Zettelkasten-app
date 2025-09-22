@@ -26,12 +26,11 @@ foreach ($files as $file) {
         $zettels[$zettel['id']] = $zettel;
     }
 }
-// Sort by created_at descending, preserve keys (ID)
 uasort($zettels, function($a, $b) {
     return strtotime($b['created_at']) - strtotime($a['created_at']);
 });
 
-// Tags for cloud/autocomplete
+// Tags
 $allTags = [];
 foreach ($zettels as $z) {
     if (!empty($z['tags']) && is_array($z['tags'])) {
@@ -39,6 +38,14 @@ foreach ($zettels as $z) {
     }
 }
 $allTags = array_unique(array_filter($allTags));
+
+/**
+ * Extract [[id]] references from content
+ */
+function extractLinksFromContent($content) {
+    preg_match_all('/\[\[([a-zA-Z0-9\-]+)\]\]/', $content, $matches);
+    return array_unique($matches[1] ?? []);
+}
 
 // POST: create, edit, delete
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -50,14 +57,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (empty($title) || strlen($title) > 255) die("Invalid title.");
         $content = trim($_POST['content']);
         if (empty($content)) die("Content cannot be empty.");
+
         $tags = array_filter(array_map('trim', explode(',', $_POST['tags'])));
         $tags = array_map(function($tag) {
             return preg_replace('/[^a-zA-Z0-9_\-]/', '', $tag);
         }, $tags);
+
         $links = array_filter(array_map('trim', explode(',', $_POST['links'])));
         $links = array_map(function($link) {
-            return preg_replace('/[^a-zA-Z0-9_\-]/', '', $link);
+            return preg_replace('/[^a-zA-Z0-9\-]/', '', $link); // allow dash
         }, $links);
+
+        // also extract [[id]] references from content
+        $contentLinks = extractLinksFromContent($content);
+        $links = array_unique(array_merge($links, $contentLinks));
+
         $id = uniqid();
         $time = date('Y-m-d H:i:s');
         $zettel = [
@@ -69,12 +83,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'created_at' => $time,
             'updated_at' => $time
         ];
-        $file = fopen($zettelsDir . '/' . $id . '.txt', 'w');
-        if (flock($file, LOCK_EX)) {
-            fwrite($file, json_encode($zettel, JSON_PRETTY_PRINT));
-            flock($file, LOCK_UN);
-        } else die("Could not lock file for writing.");
-        fclose($file);
+        file_put_contents($zettelsDir . '/' . $id . '.txt', json_encode($zettel, JSON_PRETTY_PRINT));
         header('Location: ' . $_SERVER['PHP_SELF']); exit;
     } elseif (isset($_POST['edit'])) {
         $id = $_POST['id'];
@@ -84,14 +93,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (empty($title) || strlen($title) > 255) die("Invalid title.");
             $content = trim($_POST['content']);
             if (empty($content)) die("Content cannot be empty.");
+
             $tags = array_filter(array_map('trim', explode(',', $_POST['tags'])));
             $tags = array_map(function($tag) {
                 return preg_replace('/[^a-zA-Z0-9_\-]/', '', $tag);
             }, $tags);
+
             $links = array_filter(array_map('trim', explode(',', $_POST['links'])));
             $links = array_map(function($link) {
-                return preg_replace('/[^a-zA-Z0-9_\-]/', '', $link);
+                return preg_replace('/[^a-zA-Z0-9\-]/', '', $link); // allow dash
             }, $links);
+
+            // also extract [[id]] references from content
+            $contentLinks = extractLinksFromContent($content);
+            $links = array_unique(array_merge($links, $contentLinks));
+
             $zettel = [
                 'id' => $id,
                 'title' => $title,
@@ -101,12 +117,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'created_at' => $zettels[$id]['created_at'],
                 'updated_at' => date('Y-m-d H:i:s')
             ];
-            $file = fopen($zettelsDir . '/' . $id . '.txt', 'w');
-            if (flock($file, LOCK_EX)) {
-                fwrite($file, json_encode($zettel, JSON_PRETTY_PRINT));
-                flock($file, LOCK_UN);
-            } else die("Could not lock file for writing.");
-            fclose($file);
+            file_put_contents($zettelsDir . '/' . $id . '.txt', json_encode($zettel, JSON_PRETTY_PRINT));
         }
         header('Location: ' . $_SERVER['PHP_SELF']); exit;
     } elseif (isset($_POST['delete'])) {
@@ -119,7 +130,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// Search/tag logic (always preserve keys!)
+// Search & tags
 $searchResults = [];
 if (isset($_GET['search'])) {
     $term = strtolower(trim($_GET['search']));
@@ -135,34 +146,28 @@ if (isset($_GET['search'])) {
             $searchResults[$id] = $z;
         }
     }
-    uasort($searchResults, function($a, $b) {
-        return $b['relevance_score'] - $a['relevance_score'];
-    });
+    uasort($searchResults, fn($a, $b) => $b['relevance_score'] - $a['relevance_score']);
 } elseif (isset($_GET['tag'])) {
     $tag = strtolower(trim($_GET['tag']));
     foreach ($zettels as $id => $z) {
-        if (!empty($z['tags']) && in_array($tag, array_map('strtolower', $z['tags']))) {
+        if (!empty($z['tags']) && in_array($tag, array_map('strtolower', $z['tags'] ?? []))) {
             $searchResults[$id] = $z;
         }
     }
-    uasort($searchResults, function($a, $b) {
-        return strtotime($b['created_at']) - strtotime($a['created_at']);
-    });
+    uasort($searchResults, fn($a, $b) => strtotime($b['created_at']) - strtotime($a['created_at']));
 }
 
-// Internal linkify: [[id]] -> anchor with zettel title
+// --- Helpers ---
 function linkifyInternalZettels($content, $zettels) {
-    return preg_replace_callback('/\[\[([a-zA-Z0-9]+)\]\]/', function($matches) use ($zettels) {
+    return preg_replace_callback('/\[\[([a-zA-Z0-9\-]+)\]\]/', function($matches) use ($zettels) {
         $id = $matches[1];
         if (isset($zettels[$id])) {
             $title = htmlspecialchars($zettels[$id]['title']);
             return '<a href="#' . $id . '" class="internal-zettel" data-zid="' . $id . '">' . $title . '</a>';
-        } else {
-            return '<a href="#' . $id . '" class="internal-zettel" data-zid="' . $id . '">' . $id . '</a>';
         }
+        return '<a href="#' . $id . '" class="internal-zettel" data-zid="' . $id . '">' . $id . '</a>';
     }, $content);
 }
-
 function findRelatedZettels($current, $allZettels, $limit = 5) {
     $related = [];
     foreach ($allZettels as $id => $zettel) {
@@ -171,9 +176,7 @@ function findRelatedZettels($current, $allZettels, $limit = 5) {
         $score = count($sharedTags);
         if ($score > 0) $related[$id] = ['title' => $zettel['title'], 'score' => $score];
     }
-    uasort($related, function($a, $b) {
-        return $b['score'] <=> $a['score'] ?: strcasecmp($a['title'], $b['title']);
-    });
+    uasort($related, fn($a, $b) => $b['score'] <=> $a['score'] ?: strcasecmp($a['title'], $b['title']));
     return array_slice($related, 0, $limit);
 }
 function findSimilarZettels($current, $all, $limit = 5) {
@@ -192,12 +195,14 @@ function findSimilarZettels($current, $all, $limit = 5) {
 function findBacklinks($id, $all) {
     $back = [];
     foreach ($all as $zid => $z) {
-        if (!empty($z['links']) && in_array($id, $z['links'])) $back[$zid] = $z;
+        if (!empty($z['links']) && in_array(trim($id), array_map('trim', $z['links']))) {
+            $back[$zid] = $z;
+        }
     }
     return $back;
 }
 
-// --- FIXED PAGINATION & SEARCH LOGIC ---
+// Pagination
 $perPage = 10;
 $page = max(1, intval($_GET['page'] ?? 1));
 if (isset($_GET['show'])) {
@@ -206,7 +211,6 @@ if (isset($_GET['show'])) {
     $displayZettels = $sourceZettels;
     $totalPages = 1;
 } elseif (isset($_GET['search'])) {
-    // Always use searchResults (even if empty)
     $sourceZettels = $searchResults;
     $sourceKeys = array_keys($sourceZettels);
     $slicedKeys = array_slice($sourceKeys, ($page-1)*$perPage, $perPage);
@@ -222,6 +226,7 @@ if (isset($_GET['show'])) {
     $totalPages = ceil(count($sourceZettels) / $perPage);
 }
 ?>
+<!-- HTML + JS part remains identical to Part 3 from before -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -278,15 +283,20 @@ if (isset($_GET['show'])) {
         <p>No Zettels found.</p>
     <?php else: ?>
         <?php foreach ($displayZettels as $id => $z):
-            $backlinks = findBacklinks($id, $zettels);
-            $related = findRelatedZettels($z, $zettels);
-            $similar = findSimilarZettels($z, $zettels);
-            $linkedContent = linkifyInternalZettels($z['content'], $zettels);
-        ?>
-            <div class="zettel" id="<?= $id ?>">
-                <h3><?= htmlspecialchars($z['title']) ?></h3>
-                <div class="zettel-content"><?= $parsedown->text($linkedContent) ?></div>
-                <div class="tags"><strong>Tags:</strong>
+ $backlinks = findBacklinks($id, $zettels);
+$related = findRelatedZettels($z, $zettels);
+$similar = findSimilarZettels($z, $zettels);
+
+// Parse Markdown safely first
+$markdownHtml = $parsedown->text($z['content']);
+
+// Then replace [[id]] with internal links
+$linkedContent = linkifyInternalZettels($markdownHtml, $zettels);
+?>
+    <div class="zettel" id="<?= $id ?>">
+        <h3><?= htmlspecialchars($z['title']) ?></h3>
+        <div class="zettel-content"><?= $linkedContent ?></div>
+         <div class="tags"><strong>Tags:</strong>
                     <?php foreach ($z['tags'] ?? [] as $tag): ?>
                         <a href="?tag=<?= urlencode($tag) ?>"><?= htmlspecialchars($tag) ?></a>
                     <?php endforeach; ?>
