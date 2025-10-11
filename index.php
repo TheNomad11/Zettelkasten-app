@@ -1,15 +1,11 @@
 <?php
-require_once 'Parsedown.php';
 session_start();
-if (empty($_SESSION['csrf_token'])) {
-    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
-}
-set_error_handler(function($errno, $errstr, $errfile, $errline) {
-    error_log("Error: $errstr in $errfile on line $errline");
-    die("An error occurred. Please try again later.");
-});
+$_SESSION['csrf_token'] = $_SESSION['csrf_token'] ?? bin2hex(random_bytes(32));
+
+use Parsedown;
+require_once 'Parsedown.php';
 $parsedown = new Parsedown();
-$parsedown->setSafeMode(true);
+$parsedown->setSafeMode(false);
 
 $zettelsDir = 'zettels';
 if (!file_exists($zettelsDir)) {
@@ -26,11 +22,13 @@ foreach ($files as $file) {
         $zettels[$zettel['id']] = $zettel;
     }
 }
+
+// Sort by created_at descending, preserve keys (ID)
 uasort($zettels, function($a, $b) {
     return strtotime($b['created_at']) - strtotime($a['created_at']);
 });
 
-// Tags
+// Tags for cloud/autocomplete
 $allTags = [];
 foreach ($zettels as $z) {
     if (!empty($z['tags']) && is_array($z['tags'])) {
@@ -39,22 +37,16 @@ foreach ($zettels as $z) {
 }
 $allTags = array_unique(array_filter($allTags));
 
-/**
- * Extract [[id]] references from content
- */
-function extractLinksFromContent($content) {
-    preg_match_all('/\[\[([a-zA-Z0-9\-]+)\]\]/', $content, $matches);
-    return array_unique($matches[1] ?? []);
-}
-
 // POST: create, edit, delete
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
         die("CSRF token validation failed.");
     }
+
     if (isset($_POST['create'])) {
         $title = trim($_POST['title']);
         if (empty($title) || strlen($title) > 255) die("Invalid title.");
+        
         $content = trim($_POST['content']);
         if (empty($content)) die("Content cannot be empty.");
 
@@ -65,12 +57,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $links = array_filter(array_map('trim', explode(',', $_POST['links'])));
         $links = array_map(function($link) {
-            return preg_replace('/[^a-zA-Z0-9\-]/', '', $link); // allow dash
+            return preg_replace('/[^a-zA-Z0-9_\-]/', '', $link);
         }, $links);
-
-        // also extract [[id]] references from content
-        $contentLinks = extractLinksFromContent($content);
-        $links = array_unique(array_merge($links, $contentLinks));
 
         $id = uniqid();
         $time = date('Y-m-d H:i:s');
@@ -83,14 +71,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'created_at' => $time,
             'updated_at' => $time
         ];
-        file_put_contents($zettelsDir . '/' . $id . '.txt', json_encode($zettel, JSON_PRETTY_PRINT));
-        header('Location: ' . $_SERVER['PHP_SELF']); exit;
+
+        $file = fopen($zettelsDir . '/' . $id . '.txt', 'w');
+        if (flock($file, LOCK_EX)) {
+            fwrite($file, json_encode($zettel, JSON_PRETTY_PRINT));
+            flock($file, LOCK_UN);
+        } else die("Could not lock file for writing.");
+        fclose($file);
+
+        // Handle bookmarklet popup mode
+        if (isset($_POST['bookmarklet_mode']) && $_POST['bookmarklet_mode'] === '1') {
+            echo '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Saved!</title></head><body>';
+            echo '<h2>✓ Saved to Zettelkasten!</h2>';
+            echo '<p>You can close this window now.</p>';
+            echo '<script>setTimeout(function(){ window.close(); }, 2000);</script>';
+            echo '</body></html>';
+            exit;
+        }
+
+        header('Location: ' . $_SERVER['PHP_SELF']);
+        exit;
+
     } elseif (isset($_POST['edit'])) {
         $id = $_POST['id'];
         if (!preg_match('/^[a-zA-Z0-9]+$/', $id)) die("Invalid Zettel ID.");
+        
         if (isset($zettels[$id])) {
             $title = trim($_POST['title']);
             if (empty($title) || strlen($title) > 255) die("Invalid title.");
+            
             $content = trim($_POST['content']);
             if (empty($content)) die("Content cannot be empty.");
 
@@ -101,12 +110,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $links = array_filter(array_map('trim', explode(',', $_POST['links'])));
             $links = array_map(function($link) {
-                return preg_replace('/[^a-zA-Z0-9\-]/', '', $link); // allow dash
+                return preg_replace('/[^a-zA-Z0-9_\-]/', '', $link);
             }, $links);
-
-            // also extract [[id]] references from content
-            $contentLinks = extractLinksFromContent($content);
-            $links = array_unique(array_merge($links, $contentLinks));
 
             $zettel = [
                 'id' => $id,
@@ -117,20 +122,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'created_at' => $zettels[$id]['created_at'],
                 'updated_at' => date('Y-m-d H:i:s')
             ];
-            file_put_contents($zettelsDir . '/' . $id . '.txt', json_encode($zettel, JSON_PRETTY_PRINT));
+
+            $file = fopen($zettelsDir . '/' . $id . '.txt', 'w');
+            if (flock($file, LOCK_EX)) {
+                fwrite($file, json_encode($zettel, JSON_PRETTY_PRINT));
+                flock($file, LOCK_UN);
+            } else die("Could not lock file for writing.");
+            fclose($file);
         }
-        header('Location: ' . $_SERVER['PHP_SELF']); exit;
+
+        header('Location: ' . $_SERVER['PHP_SELF']);
+        exit;
+
     } elseif (isset($_POST['delete'])) {
         $id = $_POST['id'];
         if (!preg_match('/^[a-zA-Z0-9]+$/', $id)) die("Invalid Zettel ID.");
+        
         if (file_exists($zettelsDir . '/' . $id . '.txt')) {
             unlink($zettelsDir . '/' . $id . '.txt');
         }
-        header('Location: ' . $_SERVER['PHP_SELF']); exit;
+
+        header('Location: ' . $_SERVER['PHP_SELF']);
+        exit;
     }
 }
 
-// Search & tags
+// Search/tag logic (always preserve keys!)
 $searchResults = [];
 if (isset($_GET['search'])) {
     $term = strtolower(trim($_GET['search']));
@@ -139,35 +156,44 @@ if (isset($_GET['search'])) {
         if (strpos(strtolower($z['title']), $term) !== false) $score += 3;
         if (strpos(strtolower($z['content']), $term) !== false) $score += 2;
         if (!empty($z['tags'])) foreach ($z['tags'] as $tag) {
-            if (strpos(strtolower($tag), $term) !== false) { $score += 1; break; }
+            if (strpos(strtolower($tag), $term) !== false) {
+                $score += 1;
+                break;
+            }
         }
         if ($score > 0) {
             $z['relevance_score'] = $score;
             $searchResults[$id] = $z;
         }
     }
-    uasort($searchResults, fn($a, $b) => $b['relevance_score'] - $a['relevance_score']);
+    uasort($searchResults, function($a, $b) {
+        return $b['relevance_score'] - $a['relevance_score'];
+    });
 } elseif (isset($_GET['tag'])) {
     $tag = strtolower(trim($_GET['tag']));
     foreach ($zettels as $id => $z) {
-        if (!empty($z['tags']) && in_array($tag, array_map('strtolower', $z['tags'] ?? []))) {
+        if (!empty($z['tags']) && in_array($tag, array_map('strtolower', $z['tags']))) {
             $searchResults[$id] = $z;
         }
     }
-    uasort($searchResults, fn($a, $b) => strtotime($b['created_at']) - strtotime($a['created_at']));
+    uasort($searchResults, function($a, $b) {
+        return strtotime($b['created_at']) - strtotime($a['created_at']);
+    });
 }
 
-// --- Helpers ---
+// Internal linkify: [[id]] -> anchor with zettel title
 function linkifyInternalZettels($content, $zettels) {
-    return preg_replace_callback('/\[\[([a-zA-Z0-9\-]+)\]\]/', function($matches) use ($zettels) {
+    return preg_replace_callback('/\[\[([a-zA-Z0-9]+)\]\]/', function($matches) use ($zettels) {
         $id = $matches[1];
         if (isset($zettels[$id])) {
             $title = htmlspecialchars($zettels[$id]['title']);
-            return '<a href="#' . $id . '" class="internal-zettel" data-zid="' . $id . '">' . $title . '</a>';
+            return '<a href="?show=' . $id . '" class="internal-link">' . $title . '</a>';
+        } else {
+            return '<span class="broken-link">' . $id . '</span>';
         }
-        return '<a href="#' . $id . '" class="internal-zettel" data-zid="' . $id . '">' . $id . '</a>';
     }, $content);
 }
+
 function findRelatedZettels($current, $allZettels, $limit = 5) {
     $related = [];
     foreach ($allZettels as $id => $zettel) {
@@ -176,9 +202,12 @@ function findRelatedZettels($current, $allZettels, $limit = 5) {
         $score = count($sharedTags);
         if ($score > 0) $related[$id] = ['title' => $zettel['title'], 'score' => $score];
     }
-    uasort($related, fn($a, $b) => $b['score'] <=> $a['score'] ?: strcasecmp($a['title'], $b['title']));
+    uasort($related, function($a, $b) {
+        return $b['score'] <=> $a['score'] ?: strcasecmp($a['title'], $b['title']);
+    });
     return array_slice($related, 0, $limit);
 }
+
 function findSimilarZettels($current, $all, $limit = 5) {
     $scores = [];
     foreach ($all as $id => $z) {
@@ -192,25 +221,32 @@ function findSimilarZettels($current, $all, $limit = 5) {
     arsort($scores);
     return array_slice($scores, 0, $limit, true);
 }
+
 function findBacklinks($id, $all) {
     $back = [];
     foreach ($all as $zid => $z) {
-        if (!empty($z['links']) && in_array(trim($id), array_map('trim', $z['links']))) {
-            $back[$zid] = $z;
-        }
+        if (!empty($z['links']) && in_array($id, $z['links'])) $back[$zid] = $z;
     }
     return $back;
 }
 
-// Pagination
+// --- PAGINATION & SEARCH LOGIC ---
 $perPage = 10;
 $page = max(1, intval($_GET['page'] ?? 1));
+
 if (isset($_GET['show'])) {
     $showId = $_GET['show'];
     $sourceZettels = isset($zettels[$showId]) ? [$showId => $zettels[$showId]] : [];
     $displayZettels = $sourceZettels;
     $totalPages = 1;
 } elseif (isset($_GET['search'])) {
+    $sourceZettels = $searchResults;
+    $sourceKeys = array_keys($sourceZettels);
+    $slicedKeys = array_slice($sourceKeys, ($page-1)*$perPage, $perPage);
+    $displayZettels = [];
+    foreach ($slicedKeys as $key) $displayZettels[$key] = $sourceZettels[$key];
+    $totalPages = max(1, ceil(count($sourceZettels) / $perPage));
+} elseif (isset($_GET['tag'])) {
     $sourceZettels = $searchResults;
     $sourceKeys = array_keys($sourceZettels);
     $slicedKeys = array_slice($sourceKeys, ($page-1)*$perPage, $perPage);
@@ -225,262 +261,404 @@ if (isset($_GET['show'])) {
     foreach ($slicedKeys as $key) $displayZettels[$key] = $sourceZettels[$key];
     $totalPages = ceil(count($sourceZettels) / $perPage);
 }
+
+// Check if this is bookmarklet popup mode
+$isBookmarkletMode = isset($_GET['bookmarklet']) && $_GET['bookmarklet'] === '1';
+$prefillUrl = isset($_GET['url']) ? htmlspecialchars($_GET['url']) : '';
+$prefillTitle = isset($_GET['pagetitle']) ? htmlspecialchars($_GET['pagetitle']) : '';
+
+// Check if we're showing a single zettel
+$isSingleView = isset($_GET['show']);
+
 ?>
-<!-- HTML + JS part remains identical to Part 3 from before -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Zettelkasten</title>
-    <link rel="stylesheet" href="https://code.jquery.com/ui/1.12.1/themes/base/jquery-ui.css">
-    <style>
-        body { font-family: Arial, sans-serif; line-height: 1.6; margin: 0 auto; padding: 20px; max-width: 900px; font-size: 18px;}
-        h1 { font-size: 28px; color: #333;}
-        h2 { font-size: 24px; color: #333;}
-        h3 { font-size: 22px; color: #333;}
-        form { background: #f9f9f9; padding: 20px; border-radius: 5px; margin-bottom: 20px;}
-        textarea, input[type=text] { width: 100%; padding: 8px; margin: 5px 0 15px; font-size: 16px;}
-        textarea { height: 120px;}
-        button { background: #333; color: #fff; border: none; padding: 10px 15px; cursor: pointer; font-size: 16px; border-radius: 4px;}
-        .zettel { border: 1px solid #ddd; padding: 20px; margin-bottom: 20px; border-radius: 5px; background: #fff;}
-        .zettel-content { margin: 15px 0;}
-        .zettel-content a { color: #0066cc; text-decoration: none;}
-        .zettel-content a:hover { text-decoration: underline;}
-        .tags a, .links a, .backlinks a, .related a, .similar a { color: #0066cc; text-decoration: none; margin-right: 5px;}
-        .tags a:hover, .links a:hover, .backlinks a:hover, .related a:hover, .similar a:hover { text-decoration: underline;}
-        .edit-form { display: none; background: #f0f0f0; padding: 15px; border-radius: 5px; margin-top: 10px;}
-        .edit-form.active { display: block;}
-        .timestamps { font-size: 14px; color: #666;}
-        .pagination { display: flex; justify-content: center; margin: 20px 0;}
-        .pagination a, .pagination span { display: inline-block; padding: 8px 12px; margin: 0 4px; text-decoration: none; color: #333; border: 1px solid #ddd; border-radius: 4px;}
-        .pagination a:hover { background: #ddd;}
-        .pagination .active { background: #333; color: #fff; border: 1px solid #333;}
-        .tag-cloud a { font-size: 14px; margin: 2px; display: inline-block; text-decoration: none; color: #0066cc;}
-        .tag-cloud a:hover { text-decoration: underline;}
-        .actions form { display: inline; background: transparent !important; padding: 0; margin: 0;}
-        .actions button { margin-left: 8px;}
-    </style>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="https://code.jquery.com/ui/1.13.2/themes/base/jquery-ui.css">
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://code.jquery.com/ui/1.13.2/jquery-ui.min.js"></script>
 </head>
 <body>
-    <h1>Zettelkasten</h1>
-    <form method="GET">
-        <input type="text" name="search" placeholder="Search Zettels..." value="<?= htmlspecialchars($_GET['search'] ?? '') ?>">
-        <button type="submit">Search</button>
-    </form>
-    <h2>Create New Zettel</h2>
-    <form method="POST">
-        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
-        <input type="text" name="title" placeholder="Title" required>
-        <textarea name="content" placeholder="Content (Markdown supported)" required></textarea>
-        <input type="text" name="tags" id="tags" placeholder="Tags (comma-separated)">
-        <input type="text" name="links" id="links" placeholder="Links to other Zettels (comma-separated IDs)">
-        <button type="submit" name="create">Create Zettel</button>
-    </form>
-    <h2><?= isset($_GET['search']) ? 'Search Results for: ' . htmlspecialchars($_GET['search']) : (isset($_GET['tag']) ? 'Tag: ' . htmlspecialchars($_GET['tag']) : 'All Zettels') ?></h2>
-    <?php if (isset($_GET['search']) && empty($displayZettels)): ?>
-        <p>No Zettels found for your search.</p>
-    <?php elseif (empty($displayZettels)): ?>
-        <p>No Zettels found.</p>
-    <?php else: ?>
-        <?php foreach ($displayZettels as $id => $z):
- $backlinks = findBacklinks($id, $zettels);
-$related = findRelatedZettels($z, $zettels);
-$similar = findSimilarZettels($z, $zettels);
-
-// Parse Markdown safely first
-$markdownHtml = $parsedown->text($z['content']);
-
-// Then replace [[id]] with internal links
-$linkedContent = linkifyInternalZettels($markdownHtml, $zettels);
-?>
-    <div class="zettel" id="<?= $id ?>">
-        <h3><?= htmlspecialchars($z['title']) ?></h3>
-        <div class="zettel-content"><?= $linkedContent ?></div>
-         <div class="tags"><strong>Tags:</strong>
-                    <?php foreach ($z['tags'] ?? [] as $tag): ?>
-                        <a href="?tag=<?= urlencode($tag) ?>"><?= htmlspecialchars($tag) ?></a>
-                    <?php endforeach; ?>
+    <div class="container">
+        
+<?php if ($isBookmarkletMode): ?>
+        <!-- BOOKMARKLET POPUP MODE -->
+        <div class="popup-mode">
+            <h2>📌 Save to Zettelkasten</h2>
+            <form method="POST" class="create-form">
+                <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
+                <input type="hidden" name="bookmarklet_mode" value="1">
+                
+                <label for="title">Title *</label>
+                <input type="text" id="title" name="title" value="<?= $prefillTitle ?>" required>
+                
+                <label for="content">Content / URL *</label>
+                <textarea id="content" name="content" required><?= $prefillUrl ?></textarea>
+                
+                <label for="tags">Tags (comma-separated)</label>
+                <input type="text" id="tags" name="tags" placeholder="web, article, research">
+                
+                <label for="links">Links to other Zettels (comma-separated IDs)</label>
+                <input type="text" id="links" name="links" placeholder="abc123, def456">
+                
+                <button type="submit" name="create">💾 Save Zettel</button>
+            </form>
+        </div>
+        
+<?php else: ?>
+        <!-- NORMAL MODE -->
+        <h1>🗂️ Zettelkasten</h1>
+        
+        <?php if ($isSingleView): ?>
+            <!-- Back link for single zettel view -->
+            <a href="<?= htmlspecialchars($_SERVER['PHP_SELF']) ?>" class="back-link">← Back to All Zettels</a>
+        <?php else: ?>
+            <!-- BOOKMARKLET SECTION - Only show when not in single view -->
+            <div class="bookmarklet-section">
+                <h3>🔖 Quick Capture Bookmarklet</h3>
+                <p>Drag this link to your bookmarks bar to quickly save web pages to your Zettelkasten:</p>
+                <?php 
+                $currentUrl = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "http") . "://" . htmlspecialchars($_SERVER['HTTP_HOST']) . htmlspecialchars($_SERVER['PHP_SELF']);
+                $bookmarkletCode = "javascript:(function(){var url=encodeURIComponent(window.location.href);var title=encodeURIComponent(document.title);window.open('" . $currentUrl . "?bookmarklet=1&url='+url+'&pagetitle='+title,'Zettelkasten','width=600,height=700,scrollbars=yes');})();";
+                ?>
+                <a href="<?= htmlspecialchars($bookmarkletCode) ?>" class="bookmarklet-link" onclick="alert('Drag this link to your bookmarks bar instead of clicking it!'); return false;">➕ Add to Zettelkasten</a>
+                <div class="bookmarklet-instructions">
+                    <strong>How to use:</strong> Drag the button above to your browser's bookmarks bar. When you're on a webpage you want to save, click the bookmarklet to open a popup with the URL and title pre-filled.
                 </div>
-                <div class="timestamps">
-    <strong>ID:</strong> <?= htmlspecialchars($z['id']) ?> |
-    <strong>Created:</strong> <?= htmlspecialchars($z['created_at']) ?> |
-    <strong>Updated:</strong> <?= htmlspecialchars($z['updated_at']) ?>
-</div>
-                <div class="actions">
-                    <button onclick="toggleEditForm('<?= $id ?>')">Edit</button>
-                    <form method="POST" style="display:inline;">
-                        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
-                        <input type="hidden" name="id" value="<?= $id ?>">
-                        <button type="submit" name="delete" onclick="return confirm('Delete this Zettel?')">Delete</button>
-                    </form>
-                </div>
-                <div class="edit-form" id="edit-form-<?= $id ?>">
-                    <form method="POST">
-                        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
-                        <input type="hidden" name="id" value="<?= $id ?>">
-                        <input type="text" name="title" value="<?= htmlspecialchars($z['title']) ?>" required>
-                        <textarea name="content" required><?= htmlspecialchars($z['content']) ?></textarea>
-                        <input type="text" name="tags" id="tags-edit-<?= $id ?>" value="<?= htmlspecialchars(implode(', ', $z['tags'] ?? [])) ?>">
-                        <input type="text" name="links" id="links-edit-<?= $id ?>" value="<?= htmlspecialchars(implode(', ', $z['links'] ?? [])) ?>">
-                        <button type="submit" name="edit">Save Changes</button>
-                        <button type="button" onclick="toggleEditForm('<?= $id ?>')">Cancel</button>
-                    </form>
-                </div>
-                <?php if (!empty($z['links'])): ?>
-                    <div class="links"><strong>Links:</strong>
-                        <?php foreach ($z['links'] as $linkId): if (isset($zettels[$linkId])): ?>
-                            <a href="#<?= $linkId ?>" onclick="scrollToZettel('<?= $linkId ?>', event)"><?= htmlspecialchars($zettels[$linkId]['title']) ?></a>
-                        <?php endif; endforeach; ?>
-                    </div>
-                <?php endif; ?>
-                <?php if (!empty($backlinks)): ?>
-                    <div class="backlinks"><strong>Backlinks:</strong>
-                        <ul>
-                            <?php foreach ($backlinks as $bid => $b): ?>
-                                <li><a href="#<?= $bid ?>" onclick="scrollToZettel('<?= $bid ?>', event)"><?= htmlspecialchars($b['title'] ?? 'Untitled') ?></a></li>
-                            <?php endforeach; ?>
-                        </ul>
-                    </div>
-                <?php endif; ?>
-                <?php if (!empty($related)): ?>
-                    <div class="related"><strong>Related:</strong>
-                        <ul>
-                            <?php foreach ($related as $rid => $r): ?>
-                                <li><a href="#<?= $rid ?>" onclick="scrollToZettel('<?= $rid ?>', event)"><?= htmlspecialchars($r['title'] ?? 'Untitled') ?></a></li>
-                            <?php endforeach; ?>
-                        </ul>
-                    </div>
-                <?php endif; ?>
-                <?php if (!empty($similar)): ?>
-                    <div class="similar"><strong>Similar:</strong>
-                        <ul>
-                            <?php foreach ($similar as $sid => $score): if (isset($zettels[$sid])): $sz = $zettels[$sid]; ?>
-                                <li><a href="#<?= $sid ?>" onclick="scrollToZettel('<?= $sid ?>', event)"><?= htmlspecialchars($sz['title'] ?? 'Untitled') ?></a></li>
-                            <?php endif; endforeach; ?>
-                        </ul>
-                    </div>
+            </div>
+            
+            <!-- Search Form - Only show when not in single view -->
+            <form method="GET" class="search-form">
+                <input type="text" name="search" placeholder="Search Zettels..." value="<?= htmlspecialchars($_GET['search'] ?? '') ?>">
+                <button type="submit">🔍 Search</button>
+                <a href="<?= htmlspecialchars($_SERVER['PHP_SELF']) ?>" style="padding: 10px 20px; background: #95a5a6; color: white; text-decoration: none; border-radius: 4px;">Clear</a>
+            </form>
+            
+            <!-- Tag Cloud - Only show when not in single view -->
+            <?php if (!empty($allTags)): ?>
+            <div class="tag-cloud">
+                <strong>Tags:</strong>
+                <?php foreach ($allTags as $tag): ?>
+                    <a href="?tag=<?= urlencode($tag) ?>">#<?= htmlspecialchars($tag) ?></a>
+                <?php endforeach; ?>
+            </div>
+            <?php endif; ?>
+            
+            <!-- Create New Zettel Form - Only show when not in single view -->
+            <div class="create-form">
+                <h2>Create New Zettel</h2>
+                <form method="POST">
+                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
+                    
+                    <label for="title">Title *</label>
+                    <input type="text" id="title" name="title" required>
+                    
+                    <label for="content">Content * (Markdown supported, use [[id]] for internal links)</label>
+                    <textarea id="content" name="content" required></textarea>
+                    
+                    <label for="tags">Tags (comma-separated)</label>
+                    <input type="text" id="tags" name="tags" placeholder="philosophy, productivity, ideas">
+                    
+                    <label for="links">Links to other Zettels (comma-separated IDs)</label>
+                    <input type="text" id="links" name="links" placeholder="abc123, def456">
+                    
+                    <button type="submit" name="create">Create Zettel</button>
+                </form>
+            </div>
+        <?php endif; ?>
+        
+        <!-- Display Zettels -->
+        <h2 id="zettel-content">
+            <?php if (isset($_GET['search'])): ?>
+                Search Results for "<?= htmlspecialchars($_GET['search']) ?>"
+            <?php elseif (isset($_GET['tag'])): ?>
+                Zettels tagged with #<?= htmlspecialchars($_GET['tag']) ?>
+            <?php elseif (isset($_GET['show'])): ?>
+                Zettel Details
+            <?php else: ?>
+                All Zettels
+            <?php endif; ?>
+        </h2>
+        
+        <?php if (empty($displayZettels)): ?>
+            <div class="no-results">
+                <?php if (isset($_GET['search']) || isset($_GET['tag'])): ?>
+                    No Zettels found for your search.
+                <?php else: ?>
+                    No Zettels yet. Create your first one above!
                 <?php endif; ?>
             </div>
+        <?php endif; ?>
+        
+        <?php foreach ($displayZettels as $id => $z): 
+            $backlinks = findBacklinks($id, $zettels);
+            $related = findRelatedZettels($z, $zettels);
+            $similar = findSimilarZettels($z, $zettels);
+            $linkedContent = linkifyInternalZettels($z['content'], $zettels);
+        ?>
+        <div class="zettel">
+            <div class="zettel-header">
+                <div>
+                    <h3 class="zettel-title"><?= htmlspecialchars($z['title']) ?></h3>
+                    <div class="zettel-meta">
+                        ID: <code><?= htmlspecialchars($z['id']) ?></code> | 
+                        Created: <?= htmlspecialchars($z['created_at']) ?> | 
+                        Updated: <?= htmlspecialchars($z['updated_at']) ?>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="zettel-content">
+                <?= $parsedown->text($linkedContent) ?>
+            </div>
+            
+            <?php if (!empty($z['tags'])): ?>
+            <div class="zettel-tags">
+                <?php foreach ($z['tags'] as $tag): ?>
+                    <span><a href="?tag=<?= urlencode($tag) ?>" style="color: inherit; text-decoration: none;">#<?= htmlspecialchars($tag) ?></a></span>
+                <?php endforeach; ?>
+            </div>
+            <?php endif; ?>
+            
+            <?php if (!empty($z['links'])): ?>
+            <div class="zettel-links">
+                <strong>Links to:</strong>
+                <?php foreach ($z['links'] as $link): ?>
+                    <?php if (isset($zettels[$link])): ?>
+                        <a href="?show=<?= htmlspecialchars($link) ?>"><?= htmlspecialchars($zettels[$link]['title']) ?></a>
+                    <?php else: ?>
+                        <span style="color: #e74c3c;"><?= htmlspecialchars($link) ?> (not found)</span>
+                    <?php endif; ?>
+                <?php endforeach; ?>
+            </div>
+            <?php endif; ?>
+            
+            <?php if (isset($_GET['show']) && $_GET['show'] == $id): ?>
+                <!-- Show related, similar, backlinks only in detail view -->
+                <?php if (!empty($backlinks)): ?>
+                <div class="related-section">
+                    <h4>🔗 Backlinks (Zettels linking here):</h4>
+                    <ul>
+                        <?php foreach ($backlinks as $bid => $bzettel): ?>
+                            <li><a href="?show=<?= htmlspecialchars($bid) ?>"><?= htmlspecialchars($bzettel['title']) ?></a></li>
+                        <?php endforeach; ?>
+                    </ul>
+                </div>
+                <?php endif; ?>
+                
+                <?php if (!empty($related)): ?>
+                <div class="related-section">
+                    <h4>📚 Related Zettels (by tags):</h4>
+                    <ul>
+                        <?php foreach ($related as $rid => $rdata): ?>
+                            <li><a href="?show=<?= htmlspecialchars($rid) ?>"><?= htmlspecialchars($rdata['title']) ?></a> (<?= intval($rdata['score']) ?> shared tags)</li>
+                        <?php endforeach; ?>
+                    </ul>
+                </div>
+                <?php endif; ?>
+                
+                <?php if (!empty($similar)): ?>
+                <div class="related-section">
+                    <h4>🔍 Similar Zettels (by content):</h4>
+                    <ul>
+                        <?php foreach ($similar as $sid => $score): ?>
+                            <?php if (isset($zettels[$sid])): ?>
+                                <li><a href="?show=<?= htmlspecialchars($sid) ?>"><?= htmlspecialchars($zettels[$sid]['title']) ?></a></li>
+                            <?php endif; ?>
+                        <?php endforeach; ?>
+                    </ul>
+                </div>
+                <?php endif; ?>
+            <?php endif; ?>
+            
+            <div class="zettel-actions">
+                <?php if (!isset($_GET['show']) || $_GET['show'] != $id): ?>
+                    <a href="?show=<?= htmlspecialchars($id) ?>" class="btn-view">View Details</a>
+                <?php endif; ?>
+                <button class="btn-edit" onclick="document.getElementById('edit-<?= htmlspecialchars($id) ?>').style.display='block'; this.style.display='none';">Edit</button>
+                <form method="POST" style="display: inline;" onsubmit="return confirm('Delete this Zettel?');">
+                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
+                    <input type="hidden" name="id" value="<?= htmlspecialchars($id) ?>">
+                    <button type="submit" name="delete" class="btn-delete">Delete</button>
+                </form>
+            </div>
+            
+            <!-- Edit Form (hidden by default) -->
+            <div id="edit-<?= htmlspecialchars($id) ?>" class="edit-form" style="display: none;">
+                <h3>Edit Zettel</h3>
+                <form method="POST">
+                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
+                    <input type="hidden" name="id" value="<?= htmlspecialchars($id) ?>">
+                    
+                    <label>Title</label>
+                    <input type="text" name="title" value="<?= htmlspecialchars($z['title']) ?>" required>
+                    
+                    <label>Content</label>
+                    <textarea name="content" required><?= htmlspecialchars($z['content']) ?></textarea>
+                    
+                    <label>Tags (comma-separated)</label>
+                    <input type="text" id="tags-edit-<?= htmlspecialchars($id) ?>" name="tags" value="<?= htmlspecialchars(implode(', ', $z['tags'])) ?>">
+                    
+                    <label>Links (comma-separated IDs)</label>
+                    <input type="text" id="links-edit-<?= htmlspecialchars($id) ?>" name="links" value="<?= htmlspecialchars(implode(', ', $z['links'])) ?>">
+                    
+                    <button type="submit" name="edit" class="btn-save">Save Changes</button>
+                    <button type="button" class="btn-cancel" onclick="document.getElementById('edit-<?= htmlspecialchars($id) ?>').style.display='none';">Cancel</button>
+                </form>
+            </div>
+        </div>
         <?php endforeach; ?>
-    <?php endif; ?>
-    <?php if ($totalPages > 1 && !empty($displayZettels)): ?>
+        
+        <!-- Pagination -->
+        <?php if ($totalPages > 1): ?>
         <div class="pagination">
             <?php if ($page > 1): ?>
-                <a href="?<?= http_build_query(array_merge($_GET, ['page' => $page - 1])) ?>">Prev</a>
+                <a href="?<?= http_build_query(array_merge($_GET, ['page' => $page - 1])) ?>">← Previous</a>
             <?php endif; ?>
+            
             <?php for ($i = 1; $i <= $totalPages; $i++): ?>
                 <?php if ($i == $page): ?>
-                    <span class="active"><?= $i ?></span>
+                    <span class="current"><?= $i ?></span>
                 <?php else: ?>
                     <a href="?<?= http_build_query(array_merge($_GET, ['page' => $i])) ?>"><?= $i ?></a>
                 <?php endif; ?>
             <?php endfor; ?>
+            
             <?php if ($page < $totalPages): ?>
-                <a href="?<?= http_build_query(array_merge($_GET, ['page' => $page + 1])) ?>">Next</a>
+                <a href="?<?= http_build_query(array_merge($_GET, ['page' => $page + 1])) ?>">Next →</a>
             <?php endif; ?>
         </div>
-    <?php endif; ?>
-    <h2>All Tags</h2>
-    <div class="tag-cloud">
-        <?php foreach ($allTags as $tag): ?>
-            <a href="?tag=<?= urlencode($tag) ?>"><?= htmlspecialchars($tag) ?></a>
-        <?php endforeach; ?>
-    </div>
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-    <script src="https://code.jquery.com/ui/1.12.1/jquery-ui.min.js"></script>
-    <script>
-        function toggleEditForm(id) {
-            document.getElementById('edit-form-' + id).classList.toggle('active');
-        }
-        function scrollToZettel(id, e) {
-            e.preventDefault();
-            const el = document.getElementById(id);
-            if (el) {
-                window.scrollTo({top: el.offsetTop - 20, behavior: 'smooth'});
-            } else {
-                window.location.href = "?show=" + encodeURIComponent(id);
-            }
-        }
-        <?php if (isset($_GET['show'])): ?>
-        $(document).ready(function() {
-            const el = document.getElementById("<?= htmlspecialchars($_GET['show']) ?>");
-            if (el) {
-                window.scrollTo({top: el.offsetTop - 20, behavior: 'smooth'});
-            }
-        });
         <?php endif; ?>
-        $(document).on('click', 'a.internal-zettel', function(e) {
-            var zid = $(this).attr('data-zid');
-            scrollToZettel(zid, e);
-        });
-        const allTags = <?= json_encode($allTags) ?>;
-        function setupTagAutocomplete(selector) {
-            const $el = $(selector);
-            if (!$el.length) return;
-            $el.autocomplete({
-                source: function(req, res) {
-                    const val = $el.val();
-                    const lastComma = val.lastIndexOf(',');
-                    const cur = lastComma === -1 ? val : val.substring(lastComma + 1).trim();
-                    const existing = val.split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
-                    res(allTags.filter(tag => tag.toLowerCase().includes(cur.toLowerCase()) && !existing.includes(tag.toLowerCase())));
-                },
+        
+<?php endif; ?>
+        
+    </div>
+
+<script>
+// Tag autocomplete (comma-separated)
+(function() {
+    const allTags = <?= json_encode(array_values($allTags)) ?>;
+    
+    function split(val) {
+        return val.split(/,\s*/);
+    }
+    
+    function extractLast(term) {
+        return split(term).pop();
+    }
+    
+    // Setup autocomplete for tag inputs
+    function setupTagAutocomplete(selector) {
+        $(selector)
+            .on("keydown", function(event) {
+                if (event.keyCode === $.ui.keyCode.TAB && $(this).autocomplete("instance").menu.active) {
+                    event.preventDefault();
+                }
+            })
+            .autocomplete({
                 minLength: 0,
-                appendTo: $el.parent(),
-                focus: function(e, ui) { e.preventDefault(); },
-                select: function(e, ui) {
-                    const val = $el.val();
-                    const lastComma = val.lastIndexOf(',');
-                    const before = lastComma === -1 ? '' : val.substring(0, lastComma + 1) + ' ';
-                    $el.val((before + ui.item.value + ', ').replace(/\s+,/g, ', '));
+                source: function(request, response) {
+                    const term = extractLast(request.term);
+                    const existing = split(request.term).map(t => t.trim().toLowerCase()).filter(Boolean);
+                    
+                    // Filter out already entered tags
+                    const available = allTags.filter(tag => 
+                        tag.toLowerCase().indexOf(term.toLowerCase()) > -1 &&
+                        !existing.includes(tag.toLowerCase())
+                    );
+                    response(available);
+                },
+                focus: function() {
+                    return false; // Prevent value inserted on focus
+                },
+                select: function(event, ui) {
+                    const terms = split(this.value);
+                    terms.pop(); // Remove the current input
+                    terms.push(ui.item.value); // Add the selected item
+                    terms.push(""); // Add placeholder to get the comma at the end
+                    this.value = terms.join(", ");
                     return false;
                 }
-            }).on('focus', function() {
-                $el.autocomplete('search', '');
             });
-        }
-        const allZettels = <?= json_encode(array_values(array_map(function($z) {
-            return ['id' => $z['id'], 'title' => $z['title']];
-        }, $zettels))) ?>;
-        function setupLinkAutocomplete(selector) {
-            const $el = $(selector);
-            if (!$el.length) return;
-            $el.autocomplete({
-                source: function(req, res) {
-                    const val = $el.val();
-                    const lastComma = val.lastIndexOf(',');
-                    const cur = lastComma === -1 ? val : val.substring(lastComma + 1).trim();
-                    const results = allZettels.filter(z => z.title.toLowerCase().includes(cur.toLowerCase()) || z.id.toLowerCase().includes(cur.toLowerCase()))
-                        .filter(z => !val.split(',').map(t => t.trim()).includes(z.id))
+    }
+    
+    // Apply to create form
+    setupTagAutocomplete('#tags');
+    
+    // Apply to all edit forms
+    <?php foreach ($displayZettels as $id => $z): ?>
+    setupTagAutocomplete('#tags-edit-<?= htmlspecialchars($id) ?>');
+    <?php endforeach; ?>
+})();
+
+// Zettel ID autocomplete for links
+(function() {
+    const allZettels = <?= json_encode(array_map(function($z) { 
+        return ['id' => $z['id'], 'title' => $z['title']]; 
+    }, $zettels)) ?>;
+    
+    function split(val) {
+        return val.split(/,\s*/);
+    }
+    
+    function extractLast(term) {
+        return split(term).pop();
+    }
+    
+    function setupLinkAutocomplete(selector) {
+        $(selector)
+            .on("keydown", function(event) {
+                if (event.keyCode === $.ui.keyCode.TAB && $(this).autocomplete("instance").menu.active) {
+                    event.preventDefault();
+                }
+            })
+            .autocomplete({
+                minLength: 0,
+                source: function(request, response) {
+                    const term = extractLast(request.term);
+                    const existing = split(request.term).map(t => t.trim()).filter(Boolean);
+                    
+                    const results = allZettels
+                        .filter(z => 
+                            (z.title.toLowerCase().indexOf(term.toLowerCase()) > -1 || 
+                             z.id.toLowerCase().indexOf(term.toLowerCase()) > -1) &&
+                            !existing.includes(z.id)
+                        )
                         .map(z => ({
                             label: z.title + ' (' + z.id + ')',
                             value: z.id
                         }));
-                    res(results);
+                    
+                    response(results);
                 },
-                minLength: 0,
-                appendTo: $el.parent(),
-                focus: function(e) { e.preventDefault(); },
-                select: function(e, ui) {
-                    const val = $el.val();
-                    const lastComma = val.lastIndexOf(',');
-                    const before = lastComma === -1 ? '' : val.substring(0, lastComma + 1) + ' ';
-                    $el.val(before + ui.item.value + ', ');
+                focus: function() {
+                    return false;
+                },
+                select: function(event, ui) {
+                    const terms = split(this.value);
+                    terms.pop();
+                    terms.push(ui.item.value);
+                    terms.push("");
+                    this.value = terms.join(", ");
                     return false;
                 }
-            }).on('focus', function() {
-                $el.autocomplete('search', '');
             });
-        }
-        $(document).ready(function() {
-            setupTagAutocomplete('#tags');
-            setupLinkAutocomplete('#links');
-            document.querySelectorAll('.edit-form').forEach(f => {
-                const id = f.id.split('-')[2];
-                setupTagAutocomplete('#tags-edit-' + id);
-                setupLinkAutocomplete('#links-edit-' + id);
-            });
-        });
-    </script>
+    }
+    
+    // Apply to create form
+    setupLinkAutocomplete('#links');
+    
+    // Apply to all edit forms
+    <?php foreach ($displayZettels as $id => $z): ?>
+    setupLinkAutocomplete('#links-edit-<?= htmlspecialchars($id) ?>');
+    <?php endforeach; ?>
+})();
+</script>
+
 </body>
 </html>
+
