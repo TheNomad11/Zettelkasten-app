@@ -658,6 +658,135 @@ $isSingleView = isset($_GET['show']);
     <?php endforeach; ?>
 })();
 </script>
+ <script>
+// Autosave to localStorage with timestamp display
+(function() {
+    const form = document.querySelector('.create-form form');
+    if (!form) return;
+    
+    const titleInput = form.querySelector('input[name="title"]');
+    const contentInput = form.querySelector('textarea[name="content"]');
+    const tagsInput = form.querySelector('input[name="tags"]');
+    const linksInput = form.querySelector('input[name="links"]');
+    
+    const AUTOSAVE_KEY = 'zettelkasten-draft';
+    
+    // Create save indicator element
+    const saveIndicator = document.createElement('div');
+    saveIndicator.id = 'save-indicator';
+    saveIndicator.style.cssText = 'margin-top:10px;padding:8px 12px;background:#f8f9fa;border-radius:4px;font-size:0.9em;color:#7f8c8d;display:none;';
+    form.appendChild(saveIndicator);
+    
+    // Format timestamp
+    function formatTime(timestamp) {
+        const date = new Date(timestamp);
+        const now = new Date();
+        const diffMs = now - date;
+        const diffSecs = Math.floor(diffMs / 1000);
+        const diffMins = Math.floor(diffSecs / 60);
+        
+        if (diffSecs < 10) return 'just now';
+        if (diffSecs < 60) return diffSecs + ' seconds ago';
+        if (diffMins === 1) return '1 minute ago';
+        if (diffMins < 60) return diffMins + ' minutes ago';
+        
+        // Format as time for older saves
+        const hours = date.getHours().toString().padStart(2, '0');
+        const minutes = date.getMinutes().toString().padStart(2, '0');
+        return `at ${hours}:${minutes}`;
+    }
+    
+    // Update save indicator display
+    function updateIndicator(status, timestamp) {
+        saveIndicator.style.display = 'block';
+        if (status === 'saving') {
+            saveIndicator.innerHTML = '💾 Saving draft...';
+            saveIndicator.style.color = '#3498db';
+        } else if (status === 'saved') {
+            const timeStr = formatTime(timestamp);
+            saveIndicator.innerHTML = `✓ Draft saved ${timeStr}`;
+            saveIndicator.style.color = '#27ae60';
+        }
+    }
+    
+    // Update the "time ago" every 30 seconds
+    let updateTimer;
+    function startTimeUpdates(timestamp) {
+        clearInterval(updateTimer);
+        updateTimer = setInterval(() => {
+            const draft = localStorage.getItem(AUTOSAVE_KEY);
+            if (draft) {
+                const data = JSON.parse(draft);
+                updateIndicator('saved', data.timestamp);
+            }
+        }, 30000); // Update every 30 seconds
+    }
+    
+    // Load saved draft on page load
+    function loadDraft() {
+        const draft = localStorage.getItem(AUTOSAVE_KEY);
+        if (draft) {
+            const data = JSON.parse(draft);
+            if (titleInput) titleInput.value = data.title || '';
+            if (contentInput) contentInput.value = data.content || '';
+            if (tagsInput) tagsInput.value = data.tags || '';
+            if (linksInput) linksInput.value = data.links || '';
+            
+            updateIndicator('saved', data.timestamp);
+            startTimeUpdates(data.timestamp);
+            
+            // Show notification
+            const notice = document.createElement('div');
+            notice.textContent = '✓ Draft restored from ' + formatTime(data.timestamp);
+            notice.style.cssText = 'position:fixed;top:20px;right:20px;background:#4caf50;color:white;padding:12px 20px;border-radius:5px;z-index:1000;box-shadow:0 2px 10px rgba(0,0,0,0.2);';
+            document.body.appendChild(notice);
+            setTimeout(() => notice.remove(), 4000);
+        }
+    }
+    
+    // Save draft to localStorage
+    function saveDraft() {
+        const draft = {
+            title: titleInput?.value || '',
+            content: contentInput?.value || '',
+            tags: tagsInput?.value || '',
+            links: linksInput?.value || '',
+            timestamp: Date.now()
+        };
+        
+        updateIndicator('saving', draft.timestamp);
+        
+        // Simulate brief save delay for visual feedback
+        setTimeout(() => {
+            localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(draft));
+            updateIndicator('saved', draft.timestamp);
+            startTimeUpdates(draft.timestamp);
+        }, 300);
+    }
+    
+    // Debounced autosave (saves 2 seconds after user stops typing)
+    let saveTimer;
+    function debouncedSave() {
+        clearTimeout(saveTimer);
+        saveTimer = setTimeout(saveDraft, 2000);
+    }
+    
+    // Attach listeners
+    [titleInput, contentInput, tagsInput, linksInput].forEach(input => {
+        if (input) input.addEventListener('input', debouncedSave);
+    });
+    
+    // Clear draft on successful submit
+    form.addEventListener('submit', function() {
+        localStorage.removeItem(AUTOSAVE_KEY);
+        clearInterval(updateTimer);
+        saveIndicator.style.display = 'none';
+    });
+    
+    // Load draft on page load
+    loadDraft();
+})();
+</script>
 
 </body>
 </html>
