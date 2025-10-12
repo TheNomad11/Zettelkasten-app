@@ -43,14 +43,8 @@ A lightweight, self-hosted personal knowledge management system built with PHP. 
    chmod 755 zettels
    ```
 
-4. **Start the server**
-   ```
-   php -S localhost:8000
-   ```
-
 5. **Open in browser**
-   ```
-   http://localhost:8000/zettelkasten.php
+   
    ```
 
 That's it! You're ready to start creating notes.
