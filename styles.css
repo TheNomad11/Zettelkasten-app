@@ -162,6 +162,192 @@ h3 { color: #7f8c8d; margin-top: 20px; margin-bottom: 10px; font-size: 1.1em; }
 
 .no-results { background: #fff3cd; border: 1px solid #ffc107; color: #856404; padding: 15px; border-radius: 6px; margin: 20px 0; }
 
+
+/* Make long links and long words break gracefully */
+a, 
+.zettel-content, 
+.zettel-content p, 
+.zettel-content div, 
+.zettel-content span {
+  word-wrap: break-word;   /* Older browsers */
+  overflow-wrap: break-word;
+  word-break: break-word; /* Allows break anywhere if necessary */
+  hyphens: auto;           /* Adds hyphenation if available for text */
+}
+
+/* Specifically control links inside the zettel list on main page */
+.zettel a {
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+/* Optional: prevent overflow on zettel meta info (IDs) */
+.zettel-meta code {
+  word-break: break-all; /* aggressively break */
+  overflow-wrap: break-word;
+}
+
+
+/* Authentication styles */
+.auth-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+.user-info {
+    color: #7f8c8d;
+    font-size: 0.95em;
+}
+
+.logout-btn {
+    padding: 8px 16px;
+    background: #e74c3c;
+    color: white;
+    text-decoration: none;
+    border-radius: 4px;
+    font-size: 0.9em;
+    transition: background 0.3s;
+}
+
+.logout-btn:hover {
+    background: #c0392b;
+}
+
+/* Modal Overlay */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 9999;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background-color: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(3px);
+    animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.modal-content {
+    background-color: #fff;
+    margin: 5% auto;
+    padding: 30px;
+    border-radius: 12px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+    width: 90%;
+    max-width: 700px;
+    max-height: 85vh;
+    overflow-y: auto;
+    position: relative;
+    animation: slideDown 0.3s ease;
+}
+
+@keyframes slideDown {
+    from {
+        transform: translateY(-50px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+.modal-close {
+    color: #aaa;
+    float: right;
+    font-size: 32px;
+    font-weight: bold;
+    line-height: 20px;
+    cursor: pointer;
+    transition: color 0.3s;
+}
+
+.modal-close:hover,
+.modal-close:focus {
+    color: #e74c3c;
+}
+
+.btn-create-new {
+    padding: 15px 40px;
+    font-size: 1.1em;
+    background: linear-gradient(135deg, #27ae60, #229954);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    box-shadow: 0 4px 15px rgba(39, 174, 96, 0.3);
+    transition: all 0.3s ease;
+    font-weight: 600;
+}
+
+.btn-create-new:hover {
+    background: linear-gradient(135deg, #229954, #1e8449);
+    box-shadow: 0 6px 20px rgba(39, 174, 96, 0.4);
+    transform: translateY(-2px);
+}
+
+.btn-create-new:active {
+    transform: translateY(0);
+}
+
+/* Modal form styling */
+.modal-content form input,
+.modal-content form textarea {
+    width: 100%;
+    padding: 12px;
+    margin: 8px 0 15px 0;
+    border: 2px solid #ecf0f1;
+    border-radius: 6px;
+    font-size: 1em;
+    transition: border-color 0.3s;
+}
+
+.modal-content form input:focus,
+.modal-content form textarea:focus {
+    outline: none;
+    border-color: #3498db;
+}
+
+.modal-content form label {
+    font-weight: 600;
+    color: #2c3e50;
+    display: block;
+    margin-top: 10px;
+}
+.btn-create-new {
+    padding: 15px 40px;
+    font-size: 1.1em;
+    background: #27ae60;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+}
+
+.btn-create-new:hover {
+    background: #229954;
+}
+
+.modal-close {
+    float: right;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+    color: #999;
+}
+
+.modal-close:hover {
+    color: #e74c3c;
+}
+
 @media (max-width: 768px) {
     body { padding: 10px; }
     .search-form { flex-direction: column; }
