@@ -1,0 +1,79 @@
+/* Minimal jQuery UI Autocomplete styles */
+.ui-helper-hidden-accessible {
+    border: 0;
+    clip: rect(0 0 0 0);
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    padding: 0;
+    position: absolute;
+    width: 1px;
+}
+
+.ui-autocomplete {
+    position: absolute;
+    top: 0;
+    left: 0;
+    cursor: default;
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    max-height: 200px;
+    overflow-y: auto;
+    z-index: 1000;
+    list-style: none;
+    padding: 4px 0;
+    margin: 2px 0 0;
+}
+
+.ui-menu {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: block;
+    outline: 0;
+}
+
+.ui-menu .ui-menu-item {
+    margin: 0;
+    cursor: pointer;
+    list-style-image: none;
+    padding: 0;
+}
+
+.ui-menu .ui-menu-item-wrapper {
+    position: relative;
+    padding: 8px 12px;
+    color: #333;
+    background: white;
+    display: block;
+    border: none;
+    text-decoration: none;
+}
+
+.ui-menu .ui-menu-item-wrapper:hover,
+.ui-menu .ui-state-active,
+.ui-menu .ui-state-focus {
+    background: #3498db;
+    color: white;
+    margin: 0;
+    border: none;
+}
+
+.ui-widget {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    font-size: 1em;
+}
+
+.ui-front {
+    z-index: 1000;
+}
+
+/* Fix for when items are hovered */
+.ui-state-hover,
+.ui-state-active {
+    background: #3498db !important;
+    color: white !important;
+    border: none !important;
+}
