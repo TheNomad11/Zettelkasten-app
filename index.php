@@ -1,43 +1,61 @@
 <?php
-session_start();
-$_SESSION['csrf_token'] = $_SESSION['csrf_token'] ?? bin2hex(random_bytes(32));
+// Enable error reporting for debugging
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
 
-use Parsedown;
+// Sessions last for 30 days
+ini_set('session.cookie_lifetime', 60 * 60 * 24 * 30); // 30 days
+ini_set('session.gc_maxlifetime', 60 * 60 * 24 * 30); // 30 days
+
+
+// Ensure session is properly configured
+ini_set('session.cookie_httponly', 1);
+ini_set('session.use_strict_mode', 1);
+ini_set('session.cookie_samesite', 'Lax');
+session_start();
+
+// Authentication check
+if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true) {
+    header('Location: login.php');
+    exit;
+}
+
+// DON'T add cache headers here - they might interfere
+// header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+// IMPORTANT: Prevent browser and proxy caching
+header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+header('Cache-Control: post-check=0, pre-check=0', false);
+header('Pragma: no-cache');
+header('Expires: 0');
+header("X-Content-Type-Options: nosniff");
+header("X-Frame-Options: SAMEORIGIN");
+header("X-XSS-Protection: 1; mode=block");
+header("Referrer-Policy: strict-origin-when-cross-origin");
+
+
+// Generate CSRF token only if it doesn't exist
+if (!isset($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
+// DEBUG: Check if POST is received
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    error_log("POST received: " . print_r($_POST, true));
+}
+
+
+
 require_once 'Parsedown.php';
 $parsedown = new Parsedown();
 $parsedown->setSafeMode(false);
+$parsedown->setBreaksEnabled(true);  // Enable automatic line breaks!
 
 $zettelsDir = 'zettels';
 if (!file_exists($zettelsDir)) {
     mkdir($zettelsDir, 0755, true);
 }
 
-// Load all Zettels (indexed by ID)
-$zettels = [];
-$files = glob($zettelsDir . '/*.txt');
-foreach ($files as $file) {
-    $content = file_get_contents($file);
-    $zettel = json_decode($content, true);
-    if ($zettel && !empty($zettel['id'])) {
-        $zettels[$zettel['id']] = $zettel;
-    }
-}
-
-// Sort by created_at descending, preserve keys (ID)
-uasort($zettels, function($a, $b) {
-    return strtotime($b['created_at']) - strtotime($a['created_at']);
-});
-
-// Tags for cloud/autocomplete
-$allTags = [];
-foreach ($zettels as $z) {
-    if (!empty($z['tags']) && is_array($z['tags'])) {
-        $allTags = array_merge($allTags, $z['tags']);
-    }
-}
-$allTags = array_unique(array_filter($allTags));
-
-// POST: create, edit, delete
+// POST: create, edit, delete - PROCESS FIRST BEFORE LOADING ZETTELS
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
         die("CSRF token validation failed.");
@@ -76,10 +94,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (flock($file, LOCK_EX)) {
             fwrite($file, json_encode($zettel, JSON_PRETTY_PRINT));
             flock($file, LOCK_UN);
-        } else die("Could not lock file for writing.");
+        } else {
+            die("Could not lock file for writing.");
+        }
         fclose($file);
 
-        // Handle bookmarklet popup mode
+// Invalidate tag cache
+    @unlink($zettelsDir . '/.tag_cache.json');
+
         if (isset($_POST['bookmarklet_mode']) && $_POST['bookmarklet_mode'] === '1') {
             echo '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Saved!</title></head><body>';
             echo '<h2>✓ Saved to Zettelkasten!</h2>';
@@ -92,11 +114,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         header('Location: ' . $_SERVER['PHP_SELF']);
         exit;
 
-    } elseif (isset($_POST['edit'])) {
-        $id = $_POST['id'];
-        if (!preg_match('/^[a-zA-Z0-9]+$/', $id)) die("Invalid Zettel ID.");
-        
-        if (isset($zettels[$id])) {
+ } elseif (isset($_POST['edit'])) {
+    $id = $_POST['id'];
+    if (!preg_match('/^[a-zA-Z0-9]+$/', $id)) die("Invalid Zettel ID.");
+    
+    // Path traversal protection
+    $filepath = realpath($zettelsDir) . '/' . basename($id) . '.txt';
+    if (strpos($filepath, realpath($zettelsDir)) !== 0) die("Path traversal detected");
+    
+    if (file_exists($filepath)) {
+
+            $currentContent = file_get_contents($filepath);
+            $currentZettel = json_decode($currentContent, true);
+            
             $title = trim($_POST['title']);
             if (empty($title) || strlen($title) > 255) die("Invalid title.");
             
@@ -119,32 +149,79 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'content' => $content,
                 'tags' => $tags,
                 'links' => $links,
-                'created_at' => $zettels[$id]['created_at'],
+                'created_at' => $currentZettel['created_at'],
                 'updated_at' => date('Y-m-d H:i:s')
             ];
 
-            $file = fopen($zettelsDir . '/' . $id . '.txt', 'w');
+            $file = fopen($filepath, 'w');
             if (flock($file, LOCK_EX)) {
                 fwrite($file, json_encode($zettel, JSON_PRETTY_PRINT));
                 flock($file, LOCK_UN);
-            } else die("Could not lock file for writing.");
+            } else {
+                die("Could not lock file for writing.");
+            }
             fclose($file);
         }
-
+// Invalidate tag cache
+@unlink($zettelsDir . '/.tag_cache.json');
         header('Location: ' . $_SERVER['PHP_SELF']);
         exit;
 
-    } elseif (isset($_POST['delete'])) {
-        $id = $_POST['id'];
-        if (!preg_match('/^[a-zA-Z0-9]+$/', $id)) die("Invalid Zettel ID.");
-        
-        if (file_exists($zettelsDir . '/' . $id . '.txt')) {
-            unlink($zettelsDir . '/' . $id . '.txt');
-        }
+} elseif (isset($_POST['delete'])) {
+    $id = $_POST['id'];
+    if (!preg_match('/^[a-zA-Z0-9]+$/', $id)) die("Invalid Zettel ID.");
+    
+    // Path traversal protection
+    $filepath = realpath($zettelsDir) . '/' . basename($id) . '.txt';
+    if (strpos($filepath, realpath($zettelsDir)) !== 0) die("Path traversal detected");
+    
+    if (file_exists($filepath)) {
+        unlink($filepath);
+    }
+
+// Invalidate tag cache
+    @unlink($zettelsDir . '/.tag_cache.json');
 
         header('Location: ' . $_SERVER['PHP_SELF']);
         exit;
     }
+}
+
+// Load all Zettels (indexed by ID) - AFTER POST processing
+$zettels = [];
+$files = glob($zettelsDir . '/*.txt');
+foreach ($files as $file) {
+    $content = file_get_contents($file);
+    $zettel = json_decode($content, true);
+    if ($zettel && !empty($zettel['id'])) {
+        $zettels[$zettel['id']] = $zettel;
+    }
+}
+
+// Sort by created_at descending, preserve keys (ID)
+uasort($zettels, function($a, $b) {
+    return strtotime($b['created_at']) - strtotime($a['created_at']);
+});
+
+// Tags for cloud/autocomplete with caching
+$tagCacheFile = $zettelsDir . '/.tag_cache.json';
+$tagCacheAge = file_exists($tagCacheFile) ? (time() - filemtime($tagCacheFile)) : 3600;
+
+// Use cached tags if less than 1 hour old
+if (file_exists($tagCacheFile) && $tagCacheAge < 3600) {
+    $allTags = json_decode(file_get_contents($tagCacheFile), true) ?? [];
+} else {
+    // Build tags from all zettels
+    $allTags = [];
+    foreach ($zettels as $z) {
+        if (!empty($z['tags']) && is_array($z['tags'])) {
+            $allTags = array_merge($allTags, $z['tags']);
+        }
+    }
+    $allTags = array_unique(array_filter($allTags));
+    
+    // Cache the tags for 1 hour
+    file_put_contents($tagCacheFile, json_encode($allTags));
 }
 
 // Search/tag logic (always preserve keys!)
@@ -278,9 +355,20 @@ $isSingleView = isset($_GET['show']);
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Zettelkasten</title>
     <link rel="stylesheet" href="styles.css">
-    <link rel="stylesheet" href="https://code.jquery.com/ui/1.13.2/themes/base/jquery-ui.css">
+    <link rel="stylesheet" href="jquery-ui-autocomplete.css">
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://code.jquery.com/ui/1.13.2/jquery-ui.min.js"></script>
+    
+    <!-- PWA Meta Tags -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#2c3e50">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <meta name="apple-mobile-web-app-title" content="Zettelkasten">
+    <link rel="apple-touch-icon" href="icon-192.png">
+    
+</head>
+
 </head>
 <body>
     <div class="container">
@@ -311,7 +399,12 @@ $isSingleView = isset($_GET['show']);
         
 <?php else: ?>
         <!-- NORMAL MODE -->
-        <h1>🗂️ Zettelkasten</h1>
+        <h1>🗂️ <a href="index.php">Zettelkasten</a></h1>
+        
+        <div style="text-align: right; margin-bottom: 20px;">
+            <span style="color: #7f8c8d; margin-right: 15px;">👤 <?= htmlspecialchars($_SESSION['username']) ?></span>
+            <a href="login.php?logout=1" style="padding: 8px 16px; background: #e74c3c; color: white; text-decoration: none; border-radius: 4px; font-size: 0.9em;">Logout</a>
+        </div>
         
         <?php if ($isSingleView): ?>
             <!-- Back link for single zettel view -->
@@ -348,28 +441,42 @@ $isSingleView = isset($_GET['show']);
             </div>
             <?php endif; ?>
             
-            <!-- Create New Zettel Form - Only show when not in single view -->
-            <div class="create-form">
-                <h2>Create New Zettel</h2>
-                <form method="POST">
-                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
-                    
-                    <label for="title">Title *</label>
-                    <input type="text" id="title" name="title" required>
-                    
-                    <label for="content">Content * (Markdown supported, use [[id]] for internal links)</label>
-                    <textarea id="content" name="content" required></textarea>
-                    
-                    <label for="tags">Tags (comma-separated)</label>
-                    <input type="text" id="tags" name="tags" placeholder="philosophy, productivity, ideas">
-                    
-                    <label for="links">Links to other Zettels (comma-separated IDs)</label>
-                    <input type="text" id="links" name="links" placeholder="abc123, def456">
-                    
-                    <button type="submit" name="create">Create Zettel</button>
-                </form>
-            </div>
-        <?php endif; ?>
+<!-- Create New Zettel Button - Only show when not in single view -->
+<div style="text-align: center; margin: 30px 0;">
+    <button onclick="document.getElementById('createModal').style.display='block'" class="btn-create-new">
+        ➕ Create New Zettel
+    </button>
+</div>
+
+<!-- Create Form Modal (hidden by default) -->
+<div id="createModal" class="create-form" style="display: none;">
+    <span class="modal-close" onclick="document.getElementById('createModal').style.display='none'">&times;</span>
+    <h2>Create New Zettel</h2>
+    
+    <form method="POST">
+        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
+        
+        <label for="title">Title *</label>
+        <input type="text" id="title" name="title" required>
+        
+        <label for="content">Content * (Markdown supported, use [[id]] for internal links)</label>
+        <textarea id="content" name="content" rows="10" required></textarea>
+        
+        <label for="tags">Tags (comma-separated)</label>
+        <input type="text" id="tags" name="tags" placeholder="philosophy, productivity, ideas">
+        
+        <label for="links">Links to other Zettels (comma-separated IDs)</label>
+        <input type="text" id="links" name="links" placeholder="abc123, def456">
+        
+        <button type="submit" name="create">Create Zettel</button>
+        <button type="button" onclick="document.getElementById('createModal').style.display='none'" style="background: #95a5a6; margin-left: 10px;">Cancel</button>
+    </form>
+</div>
+
+<?php endif; ?>
+
+<!-- Display Zettels -->
+
         
         <!-- Display Zettels -->
         <h2 id="zettel-content">
@@ -657,137 +764,47 @@ $isSingleView = isset($_GET['show']);
     setupLinkAutocomplete('#links-edit-<?= htmlspecialchars($id) ?>');
     <?php endforeach; ?>
 })();
-</script>
- <script>
-// Autosave to localStorage with timestamp display
-(function() {
-    const form = document.querySelector('.create-form form');
-    if (!form) return;
-    
-    const titleInput = form.querySelector('input[name="title"]');
-    const contentInput = form.querySelector('textarea[name="content"]');
-    const tagsInput = form.querySelector('input[name="tags"]');
-    const linksInput = form.querySelector('input[name="links"]');
-    
-    const AUTOSAVE_KEY = 'zettelkasten-draft';
-    
-    // Create save indicator element
-    const saveIndicator = document.createElement('div');
-    saveIndicator.id = 'save-indicator';
-    saveIndicator.style.cssText = 'margin-top:10px;padding:8px 12px;background:#f8f9fa;border-radius:4px;font-size:0.9em;color:#7f8c8d;display:none;';
-    form.appendChild(saveIndicator);
-    
-    // Format timestamp
-    function formatTime(timestamp) {
-        const date = new Date(timestamp);
-        const now = new Date();
-        const diffMs = now - date;
-        const diffSecs = Math.floor(diffMs / 1000);
-        const diffMins = Math.floor(diffSecs / 60);
-        
-        if (diffSecs < 10) return 'just now';
-        if (diffSecs < 60) return diffSecs + ' seconds ago';
-        if (diffMins === 1) return '1 minute ago';
-        if (diffMins < 60) return diffMins + ' minutes ago';
-        
-        // Format as time for older saves
-        const hours = date.getHours().toString().padStart(2, '0');
-        const minutes = date.getMinutes().toString().padStart(2, '0');
-        return `at ${hours}:${minutes}`;
+
+// Register service worker for PWA
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js')
+    .then(reg => {
+      reg.update();
+      console.log('Service Worker registered');
+    })
+    .catch(err => console.log('Service Worker registration failed'));
+}
+
+
+// Modal functions
+function openCreateModal() {
+    document.getElementById('createModal').style.display = 'block';
+    document.body.style.overflow = 'hidden'; // Prevent background scroll
+    // Focus on title field
+    setTimeout(() => document.getElementById('title').focus(), 100);
+}
+
+function closeCreateModal() {
+    document.getElementById('createModal').style.display = 'none';
+    document.body.style.overflow = 'auto'; // Re-enable scroll
+}
+
+// Close modal when clicking outside of it
+window.onclick = function(event) {
+    const modal = document.getElementById('createModal');
+    if (event.target == modal) {
+        closeCreateModal();
     }
-    
-    // Update save indicator display
-    function updateIndicator(status, timestamp) {
-        saveIndicator.style.display = 'block';
-        if (status === 'saving') {
-            saveIndicator.innerHTML = '💾 Saving draft...';
-            saveIndicator.style.color = '#3498db';
-        } else if (status === 'saved') {
-            const timeStr = formatTime(timestamp);
-            saveIndicator.innerHTML = `✓ Draft saved ${timeStr}`;
-            saveIndicator.style.color = '#27ae60';
-        }
+}
+
+// Close modal with Escape key
+document.addEventListener('keydown', function(event) {
+    if (event.key === 'Escape') {
+        closeCreateModal();
     }
-    
-    // Update the "time ago" every 30 seconds
-    let updateTimer;
-    function startTimeUpdates(timestamp) {
-        clearInterval(updateTimer);
-        updateTimer = setInterval(() => {
-            const draft = localStorage.getItem(AUTOSAVE_KEY);
-            if (draft) {
-                const data = JSON.parse(draft);
-                updateIndicator('saved', data.timestamp);
-            }
-        }, 30000); // Update every 30 seconds
-    }
-    
-    // Load saved draft on page load
-    function loadDraft() {
-        const draft = localStorage.getItem(AUTOSAVE_KEY);
-        if (draft) {
-            const data = JSON.parse(draft);
-            if (titleInput) titleInput.value = data.title || '';
-            if (contentInput) contentInput.value = data.content || '';
-            if (tagsInput) tagsInput.value = data.tags || '';
-            if (linksInput) linksInput.value = data.links || '';
-            
-            updateIndicator('saved', data.timestamp);
-            startTimeUpdates(data.timestamp);
-            
-            // Show notification
-            const notice = document.createElement('div');
-            notice.textContent = '✓ Draft restored from ' + formatTime(data.timestamp);
-            notice.style.cssText = 'position:fixed;top:20px;right:20px;background:#4caf50;color:white;padding:12px 20px;border-radius:5px;z-index:1000;box-shadow:0 2px 10px rgba(0,0,0,0.2);';
-            document.body.appendChild(notice);
-            setTimeout(() => notice.remove(), 4000);
-        }
-    }
-    
-    // Save draft to localStorage
-    function saveDraft() {
-        const draft = {
-            title: titleInput?.value || '',
-            content: contentInput?.value || '',
-            tags: tagsInput?.value || '',
-            links: linksInput?.value || '',
-            timestamp: Date.now()
-        };
-        
-        updateIndicator('saving', draft.timestamp);
-        
-        // Simulate brief save delay for visual feedback
-        setTimeout(() => {
-            localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(draft));
-            updateIndicator('saved', draft.timestamp);
-            startTimeUpdates(draft.timestamp);
-        }, 300);
-    }
-    
-    // Debounced autosave (saves 2 seconds after user stops typing)
-    let saveTimer;
-    function debouncedSave() {
-        clearTimeout(saveTimer);
-        saveTimer = setTimeout(saveDraft, 2000);
-    }
-    
-    // Attach listeners
-    [titleInput, contentInput, tagsInput, linksInput].forEach(input => {
-        if (input) input.addEventListener('input', debouncedSave);
-    });
-    
-    // Clear draft on successful submit
-    form.addEventListener('submit', function() {
-        localStorage.removeItem(AUTOSAVE_KEY);
-        clearInterval(updateTimer);
-        saveIndicator.style.display = 'none';
-    });
-    
-    // Load draft on page load
-    loadDraft();
-})();
+});
+
 </script>
 
 </body>
 </html>
-
