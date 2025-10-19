@@ -65,19 +65,33 @@ if (time() - $_SESSION['csrf_token_time'] > 21600) {
 
 
 // FIXED: Add debugging for POST requests
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    error_log("=== POST REQUEST DEBUG ===");
-    error_log("Session ID: " . session_id());
-    error_log("Session logged_in: " . (isset($_SESSION['logged_in']) ? $_SESSION['logged_in'] : 'NOT SET'));
-    error_log("Session CSRF: " . (isset($_SESSION['csrf_token']) ? $_SESSION['csrf_token'] : 'NOT SET'));
-    error_log("POST CSRF: " . (isset($_POST['csrf_token']) ? $_POST['csrf_token'] : 'NOT SET'));
-    error_log("CSRF Match: " . ((isset($_POST['csrf_token']) && isset($_SESSION['csrf_token']) && $_POST['csrf_token'] === $_SESSION['csrf_token']) ? 'YES' : 'NO'));
-}
+//if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+//    error_log("=== POST REQUEST DEBUG ===");
+//    error_log("Session ID: " . session_id());
+//    error_log("Session logged_in: " . (isset($_SESSION['logged_in']) ? $_SESSION['logged_in'] : 'NOT SET'));
+//    error_log("Session CSRF: " . (isset($_SESSION['csrf_token']) ? $_SESSION['csrf_token'] : 'NOT SET'));
+//    error_log("POST CSRF: " . (isset($_POST['csrf_token']) ? $_POST['csrf_token'] : 'NOT SET'));
+//    error_log("CSRF Match: " . ((isset($_POST['csrf_token']) && isset($_SESSION['csrf_token']) && $_POST['csrf_token'] === $_SESSION['csrf_token']) ? 'YES' : 'NO'));
+//}
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    error_log("POST received: " . print_r($_POST, true));
-}
+//if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+//    error_log("POST received: " . print_r($_POST, true));
+// }
 
+// Set once, top of file (toggle to true only when actively debugging)
+define('APP_DEBUG', false);
+
+// Minimal, safe diagnostics
+if (APP_DEBUG && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    error_log("POST event: action=" .
+        (isset($_POST['create']) ? 'create' :
+        (isset($_POST['edit']) ? 'edit' :
+        (isset($_POST['delete']) ? 'delete' : 'unknown'))) .
+        "; csrf_match=" .
+        ((isset($_POST['csrf_token'], $_SESSION['csrf_token']) &&
+          hash_equals($_POST['csrf_token'], $_SESSION['csrf_token'])) ? 'YES' : 'NO')
+    );
+}
 
 
 require_once 'Parsedown.php';
