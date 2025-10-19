@@ -1,36 +1,77 @@
 <?php
+// Sessions last for 30 days - must match index.php settings
+ini_set('session.cookie_lifetime', 60 * 60 * 24 * 30); // 30 days
+ini_set('session.gc_maxlifetime', 60 * 60 * 24 * 30); // 30 days
+ini_set('session.cookie_httponly', 1);
+ini_set('session.use_strict_mode', 1);
+ini_set('session.cookie_samesite', 'Lax');
+
 session_start();
 
 // ⚠️ IMPORTANT: Change these credentials before deploying!
 define('USERNAME', 'admin');
 // Generate new password hash by running: echo password_hash('your_password', PASSWORD_DEFAULT);
-define('PASSWORD_HASH', 'yourhashedpassword'); // 
+define('PASSWORD_HASH', 'yourhashedpassword'); 
+// FIXED: Handle logout first
+if (isset($_GET['logout'])) {
+    $logout_message = "You have been logged out successfully.";
+}
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if ($_POST['username'] === USERNAME && password_verify($_POST['password'], PASSWORD_HASH)) {
-        $_SESSION['logged_in'] = true;
-        $_SESSION['username'] = USERNAME;
-        header('Location: index.php');
-        exit;
+// FIXED: Display timeout message if session expired
+if (isset($_GET['timeout'])) {
+    $timeout_message = "Your session expired due to inactivity. Please log in again.";
+}
+
+// FIXED: Check rate limiting BEFORE processing login
+if (isset($_SESSION['login_attempts']) && $_SESSION['login_attempts'] > 5) {
+    if (isset($_SESSION['last_attempt']) && (time() - $_SESSION['last_attempt']) < 900) { // 15 min lockout
+        $error = "Too many failed attempts. Try again in " . ceil((900 - (time() - $_SESSION['last_attempt'])) / 60) . " minutes.";
+        $locked_out = true;
     } else {
-        $error = "Invalid username or password";
+        // Reset after lockout period expires
+        $_SESSION['login_attempts'] = 0;
+        unset($_SESSION['last_attempt']);
     }
 }
 
-if (isset($_GET['logout'])) {
-    session_destroy();
-    header('Location: login.php');
-    exit;
-}
-// Add after failed login
-$_SESSION['login_attempts'] = ($_SESSION['login_attempts'] ?? 0) + 1;
-$_SESSION['last_attempt'] = time();
+// FIXED: Process login only if not locked out
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($locked_out)) {
+    if (isset($_POST['username']) && isset($_POST['password'])) {
+        if ($_POST['username'] === USERNAME && password_verify($_POST['password'], PASSWORD_HASH)) {
+            // FIXED: Regenerate session ID to prevent session fixation attacks
+            session_regenerate_id(true);
 
-if ($_SESSION['login_attempts'] > 5) {
-    if (time() - $_SESSION['last_attempt'] < 900) { // 15 min lockout
-        die("Too many failed attempts. Try again in 15 minutes.");
+            // Set session variables
+            $_SESSION['logged_in'] = true;
+            $_SESSION['username'] = USERNAME;
+            $_SESSION['last_activity'] = time();
+            $_SESSION['login_time'] = time();
+
+            // FIXED: Initialize CSRF token immediately on login
+            $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+            $_SESSION['csrf_token_time'] = time();
+
+            // Reset login attempts
+            unset($_SESSION['login_attempts']);
+            unset($_SESSION['last_attempt']);
+
+            // Log successful login
+            error_log("Successful login for user: " . USERNAME);
+
+            header('Location: index.php');
+            exit;
+        } else {
+            // FIXED: Increment failed attempts after failed login
+            $_SESSION['login_attempts'] = ($_SESSION['login_attempts'] ?? 0) + 1;
+            $_SESSION['last_attempt'] = time();
+
+            // Log failed attempt
+            error_log("Failed login attempt for username: " . ($_POST['username'] ?? 'none'));
+
+            $error = "Invalid username or password";
+        }
     } else {
-        $_SESSION['login_attempts'] = 0;
+        $error = "Please provide username and password";
     }
 }
 
@@ -78,6 +119,7 @@ if ($_SESSION['login_attempts'] > 5) {
             border-radius: 6px;
             font-size: 1em;
             transition: border-color 0.3s;
+            box-sizing: border-box;
         }
         .login-form input:focus {
             outline: none;
@@ -95,9 +137,14 @@ if ($_SESSION['login_attempts'] > 5) {
             cursor: pointer;
             margin-top: 15px;
             transition: background 0.3s;
+            box-sizing: border-box;
         }
         .login-form button:hover {
             background: #229954;
+        }
+        .login-form button:disabled {
+            background: #95a5a6;
+            cursor: not-allowed;
         }
         .error {
             background: #e74c3c;
@@ -107,20 +154,27 @@ if ($_SESSION['login_attempts'] > 5) {
             margin-bottom: 20px;
             text-align: center;
         }
-        .password-hint {
-            margin-top: 20px;
-            padding: 15px;
-            background: #fff3cd;
-            border: 1px solid #ffc107;
+        .success {
+            background: #27ae60;
+            color: white;
+            padding: 12px;
             border-radius: 6px;
-            font-size: 0.9em;
-            color: #856404;
+            margin-bottom: 20px;
+            text-align: center;
         }
-        .password-hint code {
-            background: #fff;
-            padding: 2px 6px;
-            border-radius: 3px;
-            font-family: monospace;
+        .info {
+            background: #3498db;
+            color: white;
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        .attempt-counter {
+            text-align: center;
+            color: #7f8c8d;
+            font-size: 0.9em;
+            margin-top: 10px;
         }
     </style>
 </head>
@@ -128,18 +182,30 @@ if ($_SESSION['login_attempts'] > 5) {
     <div class="login-container">
         <h1>🗂️ Zettelkasten</h1>
         <h2>Sign in to continue</h2>
-        
+
+        <?php if (isset($timeout_message)): ?>
+            <div class="info"><?= htmlspecialchars($timeout_message) ?></div>
+        <?php endif; ?>
+
+        <?php if (isset($logout_message)): ?>
+            <div class="success"><?= htmlspecialchars($logout_message) ?></div>
+        <?php endif; ?>
+
         <?php if (isset($error)): ?>
             <div class="error"><?= htmlspecialchars($error) ?></div>
         <?php endif; ?>
-        
+
         <form method="POST" class="login-form">
-            <input type="text" name="username" placeholder="Username" required autofocus autocomplete="username">
-            <input type="password" name="password" placeholder="Password" required autocomplete="current-password">
-            <button type="submit">Login</button>
+            <input type="text" name="username" placeholder="Username" required autofocus autocomplete="username" <?= isset($locked_out) ? 'disabled' : '' ?>>
+            <input type="password" name="password" placeholder="Password" required autocomplete="current-password" <?= isset($locked_out) ? 'disabled' : '' ?>>
+            <button type="submit" <?= isset($locked_out) ? 'disabled' : '' ?>>Login</button>
         </form>
-        
-        
+
+        <?php if (isset($_SESSION['login_attempts']) && $_SESSION['login_attempts'] > 0 && !isset($locked_out)): ?>
+            <div class="attempt-counter">
+                Failed attempts: <?= $_SESSION['login_attempts'] ?>/5
+            </div>
+        <?php endif; ?>
     </div>
 </body>
 </html>
