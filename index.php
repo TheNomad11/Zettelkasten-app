@@ -16,29 +16,64 @@ session_start();
 
 // Authentication check
 if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true) {
+    error_log("Authentication failed - redirecting to login");
     header('Location: login.php');
     exit;
 }
 
-// DON'T add cache headers here - they might interfere
-// header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
-// IMPORTANT: Prevent browser and proxy caching
-header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
-header('Cache-Control: post-check=0, pre-check=0', false);
-header('Pragma: no-cache');
-header('Expires: 0');
+// FIXED: Add session activity tracking (security best practice)
+$_SESSION['last_activity'] = time();
+
+
+// CRITICAL: Ultra-aggressive cache prevention to stop browser caching
+// This prevents the back button from showing cached logged-in pages after logout
+header("Cache-Control: no-store, no-cache, must-revalidate, max-age=0");
+header("Cache-Control: post-check=0, pre-check=0", false);
+header("Pragma: no-cache");
+header("Expires: Sat, 26 Jul 1997 05:00:00 GMT"); // Date in the past
+header("Last-Modified: " . gmdate("D, d M Y H:i:s") . " GMT"); // Always modified
 header("X-Content-Type-Options: nosniff");
 header("X-Frame-Options: SAMEORIGIN");
 header("X-XSS-Protection: 1; mode=block");
 header("Referrer-Policy: strict-origin-when-cross-origin");
 
+// header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+// CRITICAL: Ultra-aggressive cache prevention to stop browser caching
+// This prevents the back button from showing cached logged-in pages after logout
+header("Cache-Control: no-store, no-cache, must-revalidate, max-age=0");
+header("Cache-Control: post-check=0, pre-check=0", false);
+header("Pragma: no-cache");
+header("Expires: Sat, 26 Jul 1997 05:00:00 GMT"); // Date in the past
+header("Last-Modified: " . gmdate("D, d M Y H:i:s") . " GMT"); // Always modified
+header("X-Content-Type-Options: nosniff");
+header("X-Frame-Options: SAMEORIGIN");
+header("X-XSS-Protection: 1; mode=block");
+header("Referrer-Policy: strict-origin-when-cross-origin");
 
-// Generate CSRF token only if it doesn't exist
-if (!isset($_SESSION['csrf_token'])) {
+// FIXED: Generate CSRF token with expiration to prevent stale token issues
+if (!isset($_SESSION['csrf_token']) || !isset($_SESSION['csrf_token_time'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+    $_SESSION['csrf_token_time'] = time();
 }
 
-// DEBUG: Check if POST is received
+// FIXED: Regenerate CSRF token after 6 hours to prevent cached token issues
+if (time() - $_SESSION['csrf_token_time'] > 21600) {
+    error_log("CSRF token expired, regenerating");
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+    $_SESSION['csrf_token_time'] = time();
+}
+
+
+// FIXED: Add debugging for POST requests
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    error_log("=== POST REQUEST DEBUG ===");
+    error_log("Session ID: " . session_id());
+    error_log("Session logged_in: " . (isset($_SESSION['logged_in']) ? $_SESSION['logged_in'] : 'NOT SET'));
+    error_log("Session CSRF: " . (isset($_SESSION['csrf_token']) ? $_SESSION['csrf_token'] : 'NOT SET'));
+    error_log("POST CSRF: " . (isset($_POST['csrf_token']) ? $_POST['csrf_token'] : 'NOT SET'));
+    error_log("CSRF Match: " . ((isset($_POST['csrf_token']) && isset($_SESSION['csrf_token']) && $_POST['csrf_token'] === $_SESSION['csrf_token']) ? 'YES' : 'NO'));
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     error_log("POST received: " . print_r($_POST, true));
 }
@@ -403,7 +438,7 @@ $isSingleView = isset($_GET['show']);
         
         <div style="text-align: right; margin-bottom: 20px;">
             <span style="color: #7f8c8d; margin-right: 15px;">👤 <?= htmlspecialchars($_SESSION['username']) ?></span>
-            <a href="login.php?logout=1" style="padding: 8px 16px; background: #e74c3c; color: white; text-decoration: none; border-radius: 4px; font-size: 0.9em;">Logout</a>
+            <a href="logout.php" style="padding: 8px 16px; background: #e74c3c; color: white; text-decoration: none; border-radius: 4px; font-size: 0.9em;">Logout</a>
         </div>
         
         <?php if ($isSingleView): ?>
@@ -806,5 +841,26 @@ document.addEventListener('keydown', function(event) {
 
 </script>
 
+
+<script>
+// Prevent back button from showing cached pages after logout
+(function() {
+    window.history.forward();
+
+    // Clear browser cache on page load
+    window.onpageshow = function(event) {
+        if (event.persisted) {
+            // Page loaded from cache (back button)
+            // Force reload from server
+            window.location.reload();
+        }
+    };
+
+    // Prevent caching
+    window.onunload = function() {
+        null;
+    };
+})();
+</script>
 </body>
 </html>
