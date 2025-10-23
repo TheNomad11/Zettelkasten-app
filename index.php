@@ -1,14 +1,19 @@
 <?php
-// Enable error reporting for debugging
-error_reporting(E_ALL);
-ini_set('display_errors', 1);
+// Load configuration
+require_once 'config.php';
 
-// Sessions last for 30 days
-ini_set('session.cookie_lifetime', 60 * 60 * 24 * 30); // 30 days
-ini_set('session.gc_maxlifetime', 60 * 60 * 24 * 30); // 30 days
+// Enable error reporting for debugging (only if debug mode is on)
+if (APP_DEBUG) {
+    error_reporting(E_ALL);
+    ini_set('display_errors', 1);
+} else {
+    error_reporting(0);
+    ini_set('display_errors', 0);
+}
 
-
-// Ensure session is properly configured
+// Session configuration
+ini_set('session.cookie_lifetime', SESSION_LIFETIME);
+ini_set('session.gc_maxlifetime', SESSION_LIFETIME);
 ini_set('session.cookie_httponly', 1);
 ini_set('session.use_strict_mode', 1);
 ini_set('session.cookie_samesite', 'Lax');
@@ -21,67 +26,47 @@ if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true) {
     exit;
 }
 
-// FIXED: Add session activity tracking (security best practice)
+// Session timeout check - IMPORTANT SECURITY FIX
+if (isset($_SESSION['last_activity'])) {
+    if (time() - $_SESSION['last_activity'] > SESSION_TIMEOUT) {
+        // Session expired due to inactivity
+        session_unset();
+        session_destroy();
+        header('Location: login.php?timeout=1');
+        exit;
+    }
+}
+
+// Update last activity timestamp
 $_SESSION['last_activity'] = time();
 
-
-// CRITICAL: Ultra-aggressive cache prevention to stop browser caching
-// This prevents the back button from showing cached logged-in pages after logout
+// Security headers - consolidated (removed duplicates)
 header("Cache-Control: no-store, no-cache, must-revalidate, max-age=0");
 header("Cache-Control: post-check=0, pre-check=0", false);
 header("Pragma: no-cache");
-header("Expires: Sat, 26 Jul 1997 05:00:00 GMT"); // Date in the past
-header("Last-Modified: " . gmdate("D, d M Y H:i:s") . " GMT"); // Always modified
+header("Expires: Sat, 26 Jul 1997 05:00:00 GMT");
+header("Last-Modified: " . gmdate("D, d M Y H:i:s") . " GMT");
 header("X-Content-Type-Options: nosniff");
 header("X-Frame-Options: SAMEORIGIN");
 header("X-XSS-Protection: 1; mode=block");
 header("Referrer-Policy: strict-origin-when-cross-origin");
 
-// header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
-// CRITICAL: Ultra-aggressive cache prevention to stop browser caching
-// This prevents the back button from showing cached logged-in pages after logout
-header("Cache-Control: no-store, no-cache, must-revalidate, max-age=0");
-header("Cache-Control: post-check=0, pre-check=0", false);
-header("Pragma: no-cache");
-header("Expires: Sat, 26 Jul 1997 05:00:00 GMT"); // Date in the past
-header("Last-Modified: " . gmdate("D, d M Y H:i:s") . " GMT"); // Always modified
-header("X-Content-Type-Options: nosniff");
-header("X-Frame-Options: SAMEORIGIN");
-header("X-XSS-Protection: 1; mode=block");
-header("Referrer-Policy: strict-origin-when-cross-origin");
-
-// FIXED: Generate CSRF token with expiration to prevent stale token issues
+// CSRF token management
 if (!isset($_SESSION['csrf_token']) || !isset($_SESSION['csrf_token_time'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
     $_SESSION['csrf_token_time'] = time();
 }
 
-// FIXED: Regenerate CSRF token after 6 hours to prevent cached token issues
-if (time() - $_SESSION['csrf_token_time'] > 21600) {
-    error_log("CSRF token expired, regenerating");
+// Regenerate CSRF token after expiration
+if (time() - $_SESSION['csrf_token_time'] > CSRF_TOKEN_LIFETIME) {
+    if (APP_DEBUG) {
+        error_log("CSRF token expired, regenerating");
+    }
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
     $_SESSION['csrf_token_time'] = time();
 }
 
-
-// FIXED: Add debugging for POST requests
-//if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-//    error_log("=== POST REQUEST DEBUG ===");
-//    error_log("Session ID: " . session_id());
-//    error_log("Session logged_in: " . (isset($_SESSION['logged_in']) ? $_SESSION['logged_in'] : 'NOT SET'));
-//    error_log("Session CSRF: " . (isset($_SESSION['csrf_token']) ? $_SESSION['csrf_token'] : 'NOT SET'));
-//    error_log("POST CSRF: " . (isset($_POST['csrf_token']) ? $_POST['csrf_token'] : 'NOT SET'));
-//    error_log("CSRF Match: " . ((isset($_POST['csrf_token']) && isset($_SESSION['csrf_token']) && $_POST['csrf_token'] === $_SESSION['csrf_token']) ? 'YES' : 'NO'));
-//}
-
-//if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-//    error_log("POST received: " . print_r($_POST, true));
-// }
-
-// Set once, top of file (toggle to true only when actively debugging)
-define('APP_DEBUG', false);
-
-// Minimal, safe diagnostics
+// Debug logging for POST requests (only if debug enabled)
 if (APP_DEBUG && $_SERVER['REQUEST_METHOD'] === 'POST') {
     error_log("POST event: action=" .
         (isset($_POST['create']) ? 'create' :
@@ -93,20 +78,21 @@ if (APP_DEBUG && $_SERVER['REQUEST_METHOD'] === 'POST') {
     );
 }
 
-
+// Initialize Parsedown for Markdown rendering
 require_once 'Parsedown.php';
 $parsedown = new Parsedown();
 $parsedown->setSafeMode(false);
-$parsedown->setBreaksEnabled(true);  // Enable automatic line breaks!
+$parsedown->setBreaksEnabled(true);
 
-$zettelsDir = 'zettels';
+// Ensure zettels directory exists
+$zettelsDir = ZETTELS_DIR;
 if (!file_exists($zettelsDir)) {
     mkdir($zettelsDir, 0755, true);
 }
 
 // POST: create, edit, delete - PROCESS FIRST BEFORE LOADING ZETTELS
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
+    if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) {
         die("CSRF token validation failed.");
     }
 
@@ -117,12 +103,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $content = trim($_POST['content']);
         if (empty($content)) die("Content cannot be empty.");
 
-        $tags = array_filter(array_map('trim', explode(',', $_POST['tags'])));
+        $tags = array_filter(array_map('trim', explode(',', $_POST['tags'] ?? '')));
         $tags = array_map(function($tag) {
             return preg_replace('/[^a-zA-Z0-9_\-]/', '', $tag);
         }, $tags);
 
-        $links = array_filter(array_map('trim', explode(',', $_POST['links'])));
+        $links = array_filter(array_map('trim', explode(',', $_POST['links'] ?? '')));
         $links = array_map(function($link) {
             return preg_replace('/[^a-zA-Z0-9_\-]/', '', $link);
         }, $links);
@@ -148,8 +134,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         fclose($file);
 
-// Invalidate tag cache
-    @unlink($zettelsDir . '/.tag_cache.json');
+        // Invalidate tag cache
+        @unlink($zettelsDir . '/.tag_cache.json');
 
         if (isset($_POST['bookmarklet_mode']) && $_POST['bookmarklet_mode'] === '1') {
             echo '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Saved!</title></head><body>';
@@ -163,16 +149,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         header('Location: ' . $_SERVER['PHP_SELF']);
         exit;
 
- } elseif (isset($_POST['edit'])) {
-    $id = $_POST['id'];
-    if (!preg_match('/^[a-zA-Z0-9]+$/', $id)) die("Invalid Zettel ID.");
-    
-    // Path traversal protection
-    $filepath = realpath($zettelsDir) . '/' . basename($id) . '.txt';
-    if (strpos($filepath, realpath($zettelsDir)) !== 0) die("Path traversal detected");
-    
-    if (file_exists($filepath)) {
-
+    } elseif (isset($_POST['edit'])) {
+        $id = $_POST['id'];
+        if (!preg_match('/^[a-zA-Z0-9]+$/', $id)) die("Invalid Zettel ID.");
+        
+        // Path traversal protection
+        $filepath = realpath($zettelsDir) . '/' . basename($id) . '.txt';
+        if (strpos($filepath, realpath($zettelsDir)) !== 0) die("Path traversal detected");
+        
+        if (file_exists($filepath)) {
             $currentContent = file_get_contents($filepath);
             $currentZettel = json_decode($currentContent, true);
             
@@ -182,12 +167,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $content = trim($_POST['content']);
             if (empty($content)) die("Content cannot be empty.");
 
-            $tags = array_filter(array_map('trim', explode(',', $_POST['tags'])));
+            $tags = array_filter(array_map('trim', explode(',', $_POST['tags'] ?? '')));
             $tags = array_map(function($tag) {
                 return preg_replace('/[^a-zA-Z0-9_\-]/', '', $tag);
             }, $tags);
 
-            $links = array_filter(array_map('trim', explode(',', $_POST['links'])));
+            $links = array_filter(array_map('trim', explode(',', $_POST['links'] ?? '')));
             $links = array_map(function($link) {
                 return preg_replace('/[^a-zA-Z0-9_\-]/', '', $link);
             }, $links);
@@ -211,25 +196,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             fclose($file);
         }
-// Invalidate tag cache
-@unlink($zettelsDir . '/.tag_cache.json');
+        
+        // Invalidate tag cache
+        @unlink($zettelsDir . '/.tag_cache.json');
+        
         header('Location: ' . $_SERVER['PHP_SELF']);
         exit;
 
-} elseif (isset($_POST['delete'])) {
-    $id = $_POST['id'];
-    if (!preg_match('/^[a-zA-Z0-9]+$/', $id)) die("Invalid Zettel ID.");
-    
-    // Path traversal protection
-    $filepath = realpath($zettelsDir) . '/' . basename($id) . '.txt';
-    if (strpos($filepath, realpath($zettelsDir)) !== 0) die("Path traversal detected");
-    
-    if (file_exists($filepath)) {
-        unlink($filepath);
-    }
+    } elseif (isset($_POST['delete'])) {
+        $id = $_POST['id'];
+        if (!preg_match('/^[a-zA-Z0-9]+$/', $id)) die("Invalid Zettel ID.");
+        
+        // Path traversal protection
+        $filepath = realpath($zettelsDir) . '/' . basename($id) . '.txt';
+        if (strpos($filepath, realpath($zettelsDir)) !== 0) die("Path traversal detected");
+        
+        if (file_exists($filepath)) {
+            unlink($filepath);
+        }
 
-// Invalidate tag cache
-    @unlink($zettelsDir . '/.tag_cache.json');
+        // Invalidate tag cache
+        @unlink($zettelsDir . '/.tag_cache.json');
 
         header('Location: ' . $_SERVER['PHP_SELF']);
         exit;
@@ -320,7 +307,7 @@ function linkifyInternalZettels($content, $zettels) {
     }, $content);
 }
 
-function findRelatedZettels($current, $allZettels, $limit = 5) {
+function findRelatedZettels($current, $allZettels, $limit = RELATED_ZETTELS_LIMIT) {
     $related = [];
     foreach ($allZettels as $id => $zettel) {
         if ($id == $current['id']) continue;
@@ -334,7 +321,7 @@ function findRelatedZettels($current, $allZettels, $limit = 5) {
     return array_slice($related, 0, $limit);
 }
 
-function findSimilarZettels($current, $all, $limit = 5) {
+function findSimilarZettels($current, $all, $limit = RELATED_ZETTELS_LIMIT) {
     $scores = [];
     foreach ($all as $id => $z) {
         if ($id === $current['id']) continue;
@@ -357,7 +344,7 @@ function findBacklinks($id, $all) {
 }
 
 // --- PAGINATION & SEARCH LOGIC ---
-$perPage = 10;
+$perPage = ZETTELS_PER_PAGE;
 $page = max(1, intval($_GET['page'] ?? 1));
 
 if (isset($_GET['show'])) {
@@ -415,9 +402,6 @@ $isSingleView = isset($_GET['show']);
     <meta name="apple-mobile-web-app-status-bar-style" content="black">
     <meta name="apple-mobile-web-app-title" content="Zettelkasten">
     <link rel="apple-touch-icon" href="icon-192.png">
-    
-</head>
-
 </head>
 <body>
     <div class="container">
@@ -461,7 +445,7 @@ $isSingleView = isset($_GET['show']);
         <?php else: ?>
             <!-- BOOKMARKLET SECTION - Only show when not in single view -->
             <div class="bookmarklet-section">
-                <h3>🔖 Quick Capture Bookmarklet</h3>
+                <h3>📖 Quick Capture Bookmarklet</h3>
                 <p>Drag this link to your bookmarks bar to quickly save web pages to your Zettelkasten:</p>
                 <?php 
                 $currentUrl = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "http") . "://" . htmlspecialchars($_SERVER['HTTP_HOST']) . htmlspecialchars($_SERVER['PHP_SELF']);
@@ -524,9 +508,6 @@ $isSingleView = isset($_GET['show']);
 
 <?php endif; ?>
 
-<!-- Display Zettels -->
-
-        
         <!-- Display Zettels -->
         <h2 id="zettel-content">
             <?php if (isset($_GET['search'])): ?>
@@ -619,7 +600,7 @@ $isSingleView = isset($_GET['show']);
                 
                 <?php if (!empty($similar)): ?>
                 <div class="related-section">
-                    <h4>🔍 Similar Zettels (by content):</h4>
+                    <h4>🔎 Similar Zettels (by content):</h4>
                     <ul>
                         <?php foreach ($similar as $sid => $score): ?>
                             <?php if (isset($zettels[$sid])): ?>
@@ -824,18 +805,16 @@ if ('serviceWorker' in navigator) {
     .catch(err => console.log('Service Worker registration failed'));
 }
 
-
 // Modal functions
 function openCreateModal() {
     document.getElementById('createModal').style.display = 'block';
-    document.body.style.overflow = 'hidden'; // Prevent background scroll
-    // Focus on title field
+    document.body.style.overflow = 'hidden';
     setTimeout(() => document.getElementById('title').focus(), 100);
 }
 
 function closeCreateModal() {
     document.getElementById('createModal').style.display = 'none';
-    document.body.style.overflow = 'auto'; // Re-enable scroll
+    document.body.style.overflow = 'auto';
 }
 
 // Close modal when clicking outside of it
@@ -853,24 +832,16 @@ document.addEventListener('keydown', function(event) {
     }
 });
 
-</script>
-
-
-<script>
 // Prevent back button from showing cached pages after logout
 (function() {
     window.history.forward();
 
-    // Clear browser cache on page load
     window.onpageshow = function(event) {
         if (event.persisted) {
-            // Page loaded from cache (back button)
-            // Force reload from server
             window.location.reload();
         }
     };
 
-    // Prevent caching
     window.onunload = function() {
         null;
     };
