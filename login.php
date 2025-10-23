@@ -1,31 +1,31 @@
 <?php
-// Sessions last for 30 days - must match index.php settings
-ini_set('session.cookie_lifetime', 60 * 60 * 24 * 30); // 30 days
-ini_set('session.gc_maxlifetime', 60 * 60 * 24 * 30); // 30 days
+// Load configuration
+require_once 'config.php';
+
+// Sessions configuration
+ini_set('session.cookie_lifetime', SESSION_LIFETIME);
+ini_set('session.gc_maxlifetime', SESSION_LIFETIME);
 ini_set('session.cookie_httponly', 1);
 ini_set('session.use_strict_mode', 1);
 ini_set('session.cookie_samesite', 'Lax');
 
 session_start();
 
-// ⚠️ IMPORTANT: Change these credentials before deploying!
-define('USERNAME', 'admin');
-// Generate new password hash by running: echo password_hash('your_password', PASSWORD_DEFAULT);
-define('PASSWORD_HASH', 'yourhashedpassword'); 
-// FIXED: Handle logout first
+// Handle logout message
 if (isset($_GET['logout'])) {
     $logout_message = "You have been logged out successfully.";
 }
 
-// FIXED: Display timeout message if session expired
+// Display timeout message if session expired
 if (isset($_GET['timeout'])) {
     $timeout_message = "Your session expired due to inactivity. Please log in again.";
 }
 
-// FIXED: Check rate limiting BEFORE processing login
-if (isset($_SESSION['login_attempts']) && $_SESSION['login_attempts'] > 5) {
-    if (isset($_SESSION['last_attempt']) && (time() - $_SESSION['last_attempt']) < 900) { // 15 min lockout
-        $error = "Too many failed attempts. Try again in " . ceil((900 - (time() - $_SESSION['last_attempt'])) / 60) . " minutes.";
+// Check rate limiting BEFORE processing login
+if (isset($_SESSION['login_attempts']) && $_SESSION['login_attempts'] >= MAX_LOGIN_ATTEMPTS) {
+    if (isset($_SESSION['last_attempt']) && (time() - $_SESSION['last_attempt']) < LOGIN_LOCKOUT_TIME) {
+        $remaining_time = ceil((LOGIN_LOCKOUT_TIME - (time() - $_SESSION['last_attempt'])) / 60);
+        $error = "Too many failed attempts. Try again in " . $remaining_time . " minutes.";
         $locked_out = true;
     } else {
         // Reset after lockout period expires
@@ -34,11 +34,11 @@ if (isset($_SESSION['login_attempts']) && $_SESSION['login_attempts'] > 5) {
     }
 }
 
-// FIXED: Process login only if not locked out
+// Process login only if not locked out
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($locked_out)) {
     if (isset($_POST['username']) && isset($_POST['password'])) {
         if ($_POST['username'] === USERNAME && password_verify($_POST['password'], PASSWORD_HASH)) {
-            // FIXED: Regenerate session ID to prevent session fixation attacks
+            // Regenerate session ID to prevent session fixation attacks
             session_regenerate_id(true);
 
             // Set session variables
@@ -47,7 +47,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($locked_out)) {
             $_SESSION['last_activity'] = time();
             $_SESSION['login_time'] = time();
 
-            // FIXED: Initialize CSRF token immediately on login
+            // Initialize CSRF token immediately on login
             $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
             $_SESSION['csrf_token_time'] = time();
 
@@ -61,7 +61,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($locked_out)) {
             header('Location: index.php');
             exit;
         } else {
-            // FIXED: Increment failed attempts after failed login
+            // Increment failed attempts after failed login
             $_SESSION['login_attempts'] = ($_SESSION['login_attempts'] ?? 0) + 1;
             $_SESSION['last_attempt'] = time();
 
@@ -203,7 +203,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($locked_out)) {
 
         <?php if (isset($_SESSION['login_attempts']) && $_SESSION['login_attempts'] > 0 && !isset($locked_out)): ?>
             <div class="attempt-counter">
-                Failed attempts: <?= $_SESSION['login_attempts'] ?>/5
+                Failed attempts: <?= $_SESSION['login_attempts'] ?>/<?= MAX_LOGIN_ATTEMPTS ?>
             </div>
         <?php endif; ?>
     </div>
