@@ -90,13 +90,33 @@ if (!file_exists($zettelsDir)) {
     mkdir($zettelsDir, 0755, true);
 }
 
-// POST: create, edit, delete - PROCESS FIRST BEFORE LOADING ZETTELS
+// Sticky zettel file
+$stickyFile = $zettelsDir . '/.sticky_zettel.txt';
+
+// POST: create, edit, delete, set_sticky - PROCESS FIRST BEFORE LOADING ZETTELS
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) {
         die("CSRF token validation failed.");
     }
 
-    if (isset($_POST['create'])) {
+    if (isset($_POST['set_sticky'])) {
+        $id = $_POST['id'];
+        if (!preg_match('/^[a-zA-Z0-9]+$/', $id)) die("Invalid Zettel ID.");
+        
+        // Save sticky zettel ID
+        file_put_contents($stickyFile, $id);
+        
+        header('Location: ' . $_SERVER['PHP_SELF']);
+        exit;
+        
+    } elseif (isset($_POST['unset_sticky'])) {
+        // Remove sticky zettel
+        @unlink($stickyFile);
+        
+        header('Location: ' . $_SERVER['PHP_SELF']);
+        exit;
+        
+    } elseif (isset($_POST['create'])) {
         $title = trim($_POST['title']);
         if (empty($title) || strlen($title) > 255) die("Invalid title.");
         
@@ -214,6 +234,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (file_exists($filepath)) {
             unlink($filepath);
         }
+        
+        // If deleted zettel was sticky, remove sticky reference
+        if (file_exists($stickyFile) && file_get_contents($stickyFile) === $id) {
+            @unlink($stickyFile);
+        }
 
         // Invalidate tag cache
         @unlink($zettelsDir . '/.tag_cache.json');
@@ -221,6 +246,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         header('Location: ' . $_SERVER['PHP_SELF']);
         exit;
     }
+}
+
+// Handle random zettel redirect
+if (isset($_GET['random'])) {
+    $files = glob($zettelsDir . '/*.txt');
+    if (!empty($files)) {
+        $randomFile = $files[array_rand($files)];
+        $content = file_get_contents($randomFile);
+        $zettel = json_decode($content, true);
+        if ($zettel && !empty($zettel['id'])) {
+            header('Location: ?show=' . $zettel['id']);
+            exit;
+        }
+    }
+    // If no zettels found, just go to main page
+    header('Location: ' . $_SERVER['PHP_SELF']);
+    exit;
 }
 
 // Load all Zettels (indexed by ID) - AFTER POST processing
@@ -238,6 +280,13 @@ foreach ($files as $file) {
 uasort($zettels, function($a, $b) {
     return strtotime($b['created_at']) - strtotime($a['created_at']);
 });
+
+// Get sticky zettel ID
+$stickyZettelId = file_exists($stickyFile) ? trim(file_get_contents($stickyFile)) : null;
+$stickyZettel = null;
+if ($stickyZettelId && isset($zettels[$stickyZettelId])) {
+    $stickyZettel = $zettels[$stickyZettelId];
+}
 
 // Tags for cloud/autocomplete with caching
 $tagCacheFile = $zettelsDir . '/.tag_cache.json';
@@ -432,30 +481,112 @@ $isSingleView = isset($_GET['show']);
         
 <?php else: ?>
         <!-- NORMAL MODE -->
-        <h1>🗂️ <a href="index.php">Zettelkasten</a></h1>
-        
-        <div style="text-align: right; margin-bottom: 20px;">
-            <span style="color: #7f8c8d; margin-right: 15px;">👤 <?= htmlspecialchars($_SESSION['username']) ?></span>
-            <a href="logout.php" style="padding: 8px 16px; background: #e74c3c; color: white; text-decoration: none; border-radius: 4px; font-size: 0.9em;">Logout</a>
+        <div class="header-section">
+            <h1>🗂️ <a href="index.php">Zettelkasten</a></h1>
+            
+            <div class="header-actions">
+                <?php if (count($zettels) > 0): ?>
+                    <a href="?random=1" class="btn-random">🎲 Random Note</a>
+                <?php endif; ?>
+                <span style="color: #7f8c8d; margin-left: 15px;">👤 <?= htmlspecialchars($_SESSION['username']) ?></span>
+                <a href="logout.php" style="padding: 8px 16px; background: #e74c3c; color: white; text-decoration: none; border-radius: 4px; font-size: 0.9em; margin-left: 15px;">Logout</a>
+            </div>
         </div>
         
         <?php if ($isSingleView): ?>
             <!-- Back link for single zettel view -->
             <a href="<?= htmlspecialchars($_SERVER['PHP_SELF']) ?>" class="back-link">← Back to All Zettels</a>
         <?php else: ?>
-            <!-- BOOKMARKLET SECTION - Only show when not in single view -->
-            <div class="bookmarklet-section">
-                <h3>📖 Quick Capture Bookmarklet</h3>
-                <p>Drag this link to your bookmarks bar to quickly save web pages to your Zettelkasten:</p>
+            <!-- STICKY ZETTEL - Show on main page only -->
+            <?php if ($stickyZettel && !isset($_GET['search']) && !isset($_GET['tag'])): ?>
                 <?php 
-                $currentUrl = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "http") . "://" . htmlspecialchars($_SERVER['HTTP_HOST']) . htmlspecialchars($_SERVER['PHP_SELF']);
-                $bookmarkletCode = "javascript:(function(){var url=encodeURIComponent(window.location.href);var title=encodeURIComponent(document.title);window.open('" . $currentUrl . "?bookmarklet=1&url='+url+'&pagetitle='+title,'Zettelkasten','width=600,height=700,scrollbars=yes');})();";
+                    $z = $stickyZettel;
+                    $id = $z['id'];
+                    $backlinks = findBacklinks($id, $zettels);
+                    $related = findRelatedZettels($z, $zettels);
+                    $similar = findSimilarZettels($z, $zettels);
+                    $linkedContent = linkifyInternalZettels($z['content'], $zettels);
                 ?>
-                <a href="<?= htmlspecialchars($bookmarkletCode) ?>" class="bookmarklet-link" onclick="alert('Drag this link to your bookmarks bar instead of clicking it!'); return false;">➕ Add to Zettelkasten</a>
-                <div class="bookmarklet-instructions">
-                    <strong>How to use:</strong> Drag the button above to your browser's bookmarks bar. When you're on a webpage you want to save, click the bookmarklet to open a popup with the URL and title pre-filled.
+                <div class="zettel sticky-zettel">
+                    <div class="sticky-badge">📌 Index Page / Sticky Note</div>
+                    <div class="zettel-header">
+                        <div>
+                            <h3 class="zettel-title"><?= htmlspecialchars($z['title']) ?></h3>
+                            <div class="zettel-meta">
+                                ID: <code><?= htmlspecialchars($z['id']) ?></code> | 
+                                Created: <?= htmlspecialchars($z['created_at']) ?> | 
+                                Updated: <?= htmlspecialchars($z['updated_at']) ?>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="zettel-content">
+                        <?= $parsedown->text($linkedContent) ?>
+                    </div>
+                    
+                    <?php if (!empty($z['tags'])): ?>
+                    <div class="zettel-tags">
+                        <?php foreach ($z['tags'] as $tag): ?>
+                            <span><a href="?tag=<?= urlencode($tag) ?>" style="color: inherit; text-decoration: none;">#<?= htmlspecialchars($tag) ?></a></span>
+                        <?php endforeach; ?>
+                    </div>
+                    <?php endif; ?>
+                    
+                    <?php if (!empty($z['links'])): ?>
+                    <div class="zettel-links">
+                        <strong>Links to:</strong>
+                        <?php foreach ($z['links'] as $link): ?>
+                            <?php if (isset($zettels[$link])): ?>
+                                <a href="?show=<?= htmlspecialchars($link) ?>"><?= htmlspecialchars($zettels[$link]['title']) ?></a>
+                            <?php else: ?>
+                                <span style="color: #e74c3c;"><?= htmlspecialchars($link) ?> (not found)</span>
+                            <?php endif; ?>
+                        <?php endforeach; ?>
+                    </div>
+                    <?php endif; ?>
+                    
+                    <div class="zettel-actions">
+                        <a href="?show=<?= htmlspecialchars($id) ?>" class="btn-view">View Details</a>
+                        <button class="btn-edit" onclick="document.getElementById('edit-<?= htmlspecialchars($id) ?>').style.display='block'; this.style.display='none';">Edit</button>
+                        <form method="POST" style="display: inline;">
+                            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
+                            <input type="hidden" name="id" value="<?= htmlspecialchars($id) ?>">
+                            <button type="submit" name="unset_sticky" class="btn-unpin">📍 Unpin</button>
+                        </form>
+                        <form method="POST" style="display: inline;" onsubmit="return confirm('Delete this Zettel?');">
+                            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
+                            <input type="hidden" name="id" value="<?= htmlspecialchars($id) ?>">
+                            <button type="submit" name="delete" class="btn-delete">Delete</button>
+                        </form>
+                    </div>
+                    
+                    <!-- Edit Form (hidden by default) -->
+                    <div id="edit-<?= htmlspecialchars($id) ?>" class="edit-form" style="display: none;">
+                        <h3>Edit Zettel</h3>
+                        <form method="POST">
+                            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
+                            <input type="hidden" name="id" value="<?= htmlspecialchars($id) ?>">
+                            
+                            <label>Title</label>
+                            <input type="text" name="title" value="<?= htmlspecialchars($z['title']) ?>" required>
+                            
+                            <label>Content</label>
+                            <textarea name="content" required><?= htmlspecialchars($z['content']) ?></textarea>
+                            
+                            <label>Tags (comma-separated)</label>
+                            <input type="text" id="tags-edit-<?= htmlspecialchars($id) ?>" name="tags" value="<?= htmlspecialchars(implode(', ', $z['tags'])) ?>">
+                            
+                            <label>Links (comma-separated IDs)</label>
+                            <input type="text" id="links-edit-<?= htmlspecialchars($id) ?>" name="links" value="<?= htmlspecialchars(implode(', ', $z['links'])) ?>">
+                            
+                            <button type="submit" name="edit" class="btn-save">Save Changes</button>
+                            <button type="button" class="btn-cancel" onclick="document.getElementById('edit-<?= htmlspecialchars($id) ?>').style.display='none';">Cancel</button>
+                        </form>
+                    </div>
                 </div>
-            </div>
+            <?php endif; ?>
+            
+ 
             
             <!-- Search Form - Only show when not in single view -->
             <form method="GET" class="search-form">
@@ -463,17 +594,7 @@ $isSingleView = isset($_GET['show']);
                 <button type="submit">🔍 Search</button>
                 <a href="<?= htmlspecialchars($_SERVER['PHP_SELF']) ?>" style="padding: 10px 20px; background: #95a5a6; color: white; text-decoration: none; border-radius: 4px;">Clear</a>
             </form>
-            
-            <!-- Tag Cloud - Only show when not in single view -->
-            <?php if (!empty($allTags)): ?>
-            <div class="tag-cloud">
-                <strong>Tags:</strong>
-                <?php foreach ($allTags as $tag): ?>
-                    <a href="?tag=<?= urlencode($tag) ?>">#<?= htmlspecialchars($tag) ?></a>
-                <?php endforeach; ?>
-            </div>
-            <?php endif; ?>
-            
+
 <!-- Create New Zettel Button - Only show when not in single view -->
 <div style="text-align: center; margin: 30px 0;">
     <button onclick="document.getElementById('createModal').style.display='block'" class="btn-create-new">
@@ -536,6 +657,7 @@ $isSingleView = isset($_GET['show']);
             $related = findRelatedZettels($z, $zettels);
             $similar = findSimilarZettels($z, $zettels);
             $linkedContent = linkifyInternalZettels($z['content'], $zettels);
+            $isSticky = ($stickyZettelId === $id);
         ?>
         <div class="zettel">
             <div class="zettel-header">
@@ -545,6 +667,9 @@ $isSingleView = isset($_GET['show']);
                         ID: <code><?= htmlspecialchars($z['id']) ?></code> | 
                         Created: <?= htmlspecialchars($z['created_at']) ?> | 
                         Updated: <?= htmlspecialchars($z['updated_at']) ?>
+                        <?php if ($isSticky): ?>
+                            <span style="color: #f39c12; font-weight: bold;"> | 📌 Pinned</span>
+                        <?php endif; ?>
                     </div>
                 </div>
             </div>
@@ -617,6 +742,21 @@ $isSingleView = isset($_GET['show']);
                     <a href="?show=<?= htmlspecialchars($id) ?>" class="btn-view">View Details</a>
                 <?php endif; ?>
                 <button class="btn-edit" onclick="document.getElementById('edit-<?= htmlspecialchars($id) ?>').style.display='block'; this.style.display='none';">Edit</button>
+                
+                <?php if (!$isSticky): ?>
+                    <form method="POST" style="display: inline;">
+                        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
+                        <input type="hidden" name="id" value="<?= htmlspecialchars($id) ?>">
+                        <button type="submit" name="set_sticky" class="btn-pin">📌 Make Sticky</button>
+                    </form>
+                <?php else: ?>
+                    <form method="POST" style="display: inline;">
+                        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
+                        <input type="hidden" name="id" value="<?= htmlspecialchars($id) ?>">
+                        <button type="submit" name="unset_sticky" class="btn-unpin">📍 Unpin</button>
+                    </form>
+                <?php endif; ?>
+                
                 <form method="POST" style="display: inline;" onsubmit="return confirm('Delete this Zettel?');">
                     <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
                     <input type="hidden" name="id" value="<?= htmlspecialchars($id) ?>">
@@ -670,6 +810,38 @@ $isSingleView = isset($_GET['show']);
             <?php endif; ?>
         </div>
         <?php endif; ?>
+        
+        <!-- Tag Cloud - MOVED TO BOTTOM -->
+        <?php if (!$isSingleView && !empty($allTags)): ?>
+        <div class="tag-cloud tag-cloud-bottom">
+            <strong>All Tags:</strong>
+            <?php foreach ($allTags as $tag): ?>
+                <a href="?tag=<?= urlencode($tag) ?>">#<?= htmlspecialchars($tag) ?></a>
+            <?php endforeach; ?>
+        </div>
+        <?php endif; ?>
+
+
+
+           <!-- BOOKMARKLET SECTION - Only show when not in single view -->
+            <div class="bookmarklet-section">
+                <h3>📖 Quick Capture Bookmarklet</h3>
+                <p>Drag this link to your bookmarks bar to quickly save web pages to your Zettelkasten:</p>
+                <?php 
+                $currentUrl = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "http") . "://" . htmlspecialchars($_SERVER['HTTP_HOST']) . htmlspecialchars($_SERVER['PHP_SELF']);
+                $bookmarkletCode = "javascript:(function(){var url=encodeURIComponent(window.location.href);var title=encodeURIComponent(document.title);window.open('" . $currentUrl . "?bookmarklet=1&url='+url+'&pagetitle='+title,'Zettelkasten','width=600,height=700,scrollbars=yes');})();";
+                ?>
+                <a href="<?= htmlspecialchars($bookmarkletCode) ?>" class="bookmarklet-link" onclick="alert('Drag this link to your bookmarks bar instead of clicking it!'); return false;">➕ Add to Zettelkasten</a>
+                <div class="bookmarklet-instructions">
+                    <strong>How to use:</strong> Drag the button above to your browser's bookmarks bar. When you're on a webpage you want to save, click the bookmarklet to open a popup with the URL and title pre-filled.
+                </div>
+            </div>
+
+
+
+
+
+
         
 <?php endif; ?>
         
@@ -730,6 +902,10 @@ $isSingleView = isset($_GET['show']);
     <?php foreach ($displayZettels as $id => $z): ?>
     setupTagAutocomplete('#tags-edit-<?= htmlspecialchars($id) ?>');
     <?php endforeach; ?>
+    
+    <?php if ($stickyZettel): ?>
+    setupTagAutocomplete('#tags-edit-<?= htmlspecialchars($stickyZettel['id']) ?>');
+    <?php endif; ?>
 })();
 
 // Zettel ID autocomplete for links
@@ -793,6 +969,10 @@ $isSingleView = isset($_GET['show']);
     <?php foreach ($displayZettels as $id => $z): ?>
     setupLinkAutocomplete('#links-edit-<?= htmlspecialchars($id) ?>');
     <?php endforeach; ?>
+    
+    <?php if ($stickyZettel): ?>
+    setupLinkAutocomplete('#links-edit-<?= htmlspecialchars($stickyZettel['id']) ?>');
+    <?php endif; ?>
 })();
 
 // Register service worker for PWA
