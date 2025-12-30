@@ -320,6 +320,7 @@ h3 { color: #7f8c8d; margin-top: 20px; margin-bottom: 10px; font-size: 1.1em; }
     margin: 0;
     padding: 0;
     display: inline-flex;
+    flex: 0 0 auto;
 }
 
 /* All buttons in zettel actions should have consistent styling */
@@ -614,16 +615,26 @@ a,
     .zettel-actions { 
         flex-direction: column; 
         align-items: stretch;
+        gap: 10px;
     }
     
     .zettel-actions button,
     .zettel-actions a,
     .zettel-actions form {
         width: 100%;
+        margin: 0;
     }
     
     .zettel-actions form button {
         width: 100%;
+    }
+    
+    .zettel-actions .btn,
+    .zettel-actions button,
+    .zettel-actions a {
+        display: flex;
+        width: 100% !important;
+        box-sizing: border-box;
     }
     
     /* Bookmarklet section */
