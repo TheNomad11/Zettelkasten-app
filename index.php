@@ -207,14 +207,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'updated_at' => date('Y-m-d H:i:s')
             ];
 
-            $file = fopen($filepath, 'w');
-            if (flock($file, LOCK_EX)) {
-                fwrite($file, json_encode($zettel, JSON_PRETTY_PRINT));
-                flock($file, LOCK_UN);
-            } else {
-                die("Could not lock file for writing.");
-            }
-            fclose($file);
+$file = @fopen($filepath, 'w');
+if ($file === false) {
+    error_log("Warning: Could not open file for writing. Check directory permissions for: " . $filepath);
+    die("Error: Could not save zettel. Please check file permissions for the zettels directory.");
+}
+
+if (flock($file, LOCK_EX)) {
+    fwrite($file, json_encode($zettel, JSON_PRETTY_PRINT));
+    flock($file, LOCK_UN);
+} else {
+    error_log("Warning: Could not lock file for writing: " . $filepath);
+    die("Error: Could not lock file for writing. Please try again.");
+}
+fclose($file);
         }
         
         // Invalidate tag cache
@@ -306,9 +312,11 @@ if (file_exists($tagCacheFile) && $tagCacheAge < 3600) {
     $allTags = array_unique(array_filter($allTags));
     
     // Cache the tags for 1 hour
-    file_put_contents($tagCacheFile, json_encode($allTags));
+    if (!file_put_contents($tagCacheFile, json_encode($allTags))) {
+    error_log("Warning: Could not write to tag cache file. Check directory permissions for: " . $tagCacheFile);
+    // Continue without caching - the app will still work, just slower
 }
-
+}
 // Search/tag logic (always preserve keys!)
 $searchResults = [];
 if (isset($_GET['search'])) {
@@ -362,18 +370,31 @@ if (isset($_GET['search'])) {
     });
 }
 
-// Internal linkify: [[id]] -> anchor with zettel title
+// Basic markdown text escaper for link labels
+function mdEscape($text) {
+    // Escape characters that can break Markdown link labels
+    return str_replace(['\\', '[', ']'], ['\\\\', '\\[', '\\]'], $text);
+}
+
+// Internal linkify: [[id]] -> Markdown link (safe-mode compatible)
 function linkifyInternalZettels($content, $zettels) {
-    return preg_replace_callback('/\[\[([a-zA-Z0-9]+)\]\]/', function($matches) use ($zettels) {
+    return preg_replace_callback('/\\[\\[([a-zA-Z0-9]+)\\]\\]/', function($matches) use ($zettels) {
         $id = $matches[1];
+
         if (isset($zettels[$id])) {
-            $title = htmlspecialchars($zettels[$id]['title']);
-            return '<a href="?show=' . $id . '" class="internal-link">' . $title . '</a>';
-        } else {
-            return '<span class="broken-link">' . $id . '</span>';
+            $title = $zettels[$id]['title'] ?? $id;
+            $title = mdEscape($title);
+
+            // Use Markdown link syntax so Parsedown safe mode renders it as <a href=...>
+            // rawurlencode is safe even if IDs are alnum
+            return '[' . $title . '](?show=' . rawurlencode($id) . ')';
         }
+
+        // Keep a readable marker for missing notes (no HTML)
+        return '`[[' . $id . ']]`';
     }, $content);
 }
+
 
 function findRelatedZettels($current, $allZettels, $limit = RELATED_ZETTELS_LIMIT) {
     $related = [];
@@ -507,6 +528,7 @@ $isSingleView = isset($_GET['show']);
                 <?php if (count($zettels) > 0): ?>
                     <a href="?random=1" class="btn-random btn">🎲 Random Note</a>
                     <a href="export.php" class="btn-export-link btn">📥 Export</a>
+<a href="import.php" class="btn-export-link btn">📥 Import</a>
                 <?php endif; ?>
                 <span style="color: #7f8c8d; margin-left: 15px;">👤 <?= htmlspecialchars($_SESSION['username']) ?></span>
                 <a href="logout.php" class="btn-logout btn">Logout</a>
