@@ -313,21 +313,40 @@ if (file_exists($tagCacheFile) && $tagCacheAge < 3600) {
 $searchResults = [];
 if (isset($_GET['search'])) {
     $term = strtolower(trim($_GET['search']));
+    
+    // Create word boundary pattern for whole word matching
+    // \b matches word boundaries (spaces, punctuation, start/end of string)
+    $pattern = '/\b' . preg_quote($term, '/') . '\b/i';
+    
     foreach ($zettels as $id => $z) {
         $score = 0;
-        if (strpos(strtolower($z['title']), $term) !== false) $score += 3;
-        if (strpos(strtolower($z['content']), $term) !== false) $score += 2;
-        if (!empty($z['tags'])) foreach ($z['tags'] as $tag) {
-            if (strpos(strtolower($tag), $term) !== false) {
-                $score += 1;
-                break;
+        
+        // Check title for whole word match
+        if (preg_match($pattern, $z['title'])) {
+            $score += 3;
+        }
+        
+        // Check content for whole word match
+        if (preg_match($pattern, $z['content'])) {
+            $score += 2;
+        }
+        
+        // Check tags for whole word match (tags are usually single words anyway)
+        if (!empty($z['tags'])) {
+            foreach ($z['tags'] as $tag) {
+                if (preg_match($pattern, $tag)) {
+                    $score += 1;
+                    break;
+                }
             }
         }
+        
         if ($score > 0) {
             $z['relevance_score'] = $score;
             $searchResults[$id] = $z;
         }
     }
+    
     uasort($searchResults, function($a, $b) {
         return $b['relevance_score'] - $a['relevance_score'];
     });
@@ -486,10 +505,11 @@ $isSingleView = isset($_GET['show']);
             
             <div class="header-actions">
                 <?php if (count($zettels) > 0): ?>
-                    <a href="?random=1" class="btn-random">🎲 Random Note</a>
+                    <a href="?random=1" class="btn-random btn">🎲 Random Note</a>
+                    <a href="export.php" class="btn-export-link btn">📥 Export</a>
                 <?php endif; ?>
                 <span style="color: #7f8c8d; margin-left: 15px;">👤 <?= htmlspecialchars($_SESSION['username']) ?></span>
-                <a href="logout.php" style="padding: 8px 16px; background: #e74c3c; color: white; text-decoration: none; border-radius: 4px; font-size: 0.9em; margin-left: 15px;">Logout</a>
+                <a href="logout.php" class="btn-logout btn">Logout</a>
             </div>
         </div>
         
@@ -586,7 +606,19 @@ $isSingleView = isset($_GET['show']);
                 </div>
             <?php endif; ?>
             
- 
+            <!-- BOOKMARKLET SECTION - Only show when not in single view -->
+            <div class="bookmarklet-section">
+                <h3>📖 Quick Capture Bookmarklet</h3>
+                <p>Drag this link to your bookmarks bar to quickly save web pages to your Zettelkasten:</p>
+                <?php 
+                $currentUrl = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "http") . "://" . htmlspecialchars($_SERVER['HTTP_HOST']) . htmlspecialchars($_SERVER['PHP_SELF']);
+                $bookmarkletCode = "javascript:(function(){var url=encodeURIComponent(window.location.href);var title=encodeURIComponent(document.title);window.open('" . $currentUrl . "?bookmarklet=1&url='+url+'&pagetitle='+title,'Zettelkasten','width=600,height=700,scrollbars=yes');})();";
+                ?>
+                <a href="<?= htmlspecialchars($bookmarkletCode) ?>" class="bookmarklet-link" onclick="alert('Drag this link to your bookmarks bar instead of clicking it!'); return false;">➕ Add to Zettelkasten</a>
+                <div class="bookmarklet-instructions">
+                    <strong>How to use:</strong> Drag the button above to your browser's bookmarks bar. When you're on a webpage you want to save, click the bookmarklet to open a popup with the URL and title pre-filled.
+                </div>
+            </div>
             
             <!-- Search Form - Only show when not in single view -->
             <form method="GET" class="search-form">
@@ -820,28 +852,6 @@ $isSingleView = isset($_GET['show']);
             <?php endforeach; ?>
         </div>
         <?php endif; ?>
-
-
-
-           <!-- BOOKMARKLET SECTION - Only show when not in single view -->
-            <div class="bookmarklet-section">
-                <h3>📖 Quick Capture Bookmarklet</h3>
-                <p>Drag this link to your bookmarks bar to quickly save web pages to your Zettelkasten:</p>
-                <?php 
-                $currentUrl = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "http") . "://" . htmlspecialchars($_SERVER['HTTP_HOST']) . htmlspecialchars($_SERVER['PHP_SELF']);
-                $bookmarkletCode = "javascript:(function(){var url=encodeURIComponent(window.location.href);var title=encodeURIComponent(document.title);window.open('" . $currentUrl . "?bookmarklet=1&url='+url+'&pagetitle='+title,'Zettelkasten','width=600,height=700,scrollbars=yes');})();";
-                ?>
-                <a href="<?= htmlspecialchars($bookmarkletCode) ?>" class="bookmarklet-link" onclick="alert('Drag this link to your bookmarks bar instead of clicking it!'); return false;">➕ Add to Zettelkasten</a>
-                <div class="bookmarklet-instructions">
-                    <strong>How to use:</strong> Drag the button above to your browser's bookmarks bar. When you're on a webpage you want to save, click the bookmarklet to open a popup with the URL and title pre-filled.
-                </div>
-            </div>
-
-
-
-
-
-
         
 <?php endif; ?>
         
