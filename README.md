@@ -1,151 +1,381 @@
 # 🗂️ Zettelkasten PHP-App (vibe coded)
 
-A lightweight, self-hosted personal knowledge management system built with PHP. Create interconnected notes with Markdown support, tags, and bidirectional links - inspired by the Zettelkasten method.
+A lightweight, self-hosted Zettelkasten (slip-box) system for organizing notes, thoughts, and knowledge with powerful linking and discovery features. Vibe-coded mostly with Claude Sonnet 4.5 and double checked with different other models. 
 
 ## ✨ Features
 
-- **📝 Markdown Support** - Write notes with full Markdown formatting (headings, lists, blockquotes, code blocks, tables)
-- **🔗 Bidirectional Linking** - Connect notes using `[[id]]` syntax and see backlinks automatically
-- **🏷️ Smart Tagging** - Organize with comma-separated tags and autocomplete suggestions
-- **🔍 Powerful Search** - Full-text search across titles, content, and tags with relevance scoring
-- **🔖 Browser Bookmarklet** - Quick-capture web pages directly to your Zettelkasten
-- **📊 Related Notes** - Automatically discover similar and related notes based on tags and content
-- **📱 Mobile-Friendly** - Responsive design that works on all devices
-- **🎨 Clean UI** - Modern, colorful interface with smooth scrolling
-- **🔒 Secure** - CSRF protection, XSS prevention, and input validation built-in
-- **📄 File-Based** - No database required - all notes stored as JSON files
-- **⚡ Fast** - Pagination support for large note collections
+### Core Functionality
+- **📝 Markdown Support** - Write notes with full Markdown formatting
+- **🔗 Internal Linking** - Connect notes using `[[id]]` syntax
+- **🏷️ Tagging System** - Organize with comma-separated tags
+- **🔍 Smart Search** - Whole-word search across titles, content, and tags
+- **📌 Sticky Notes** - Pin an index/overview note to the top of your main page
+- **🎲 Random Note** - Discover notes serendipitously
+- **📊 Related Notes** - Automatic discovery of related content by tags and similarity
+- **🔙 Backlinks** - See which notes link to the current note
 
-## 🚀 Quick Start
+### Export & Backup
+- **📄 Single Markdown Export** - All notes in one file with table of contents
+- **📦 ZIP Export** - Individual markdown files for each note
+- **💾 JSON Backup** - Complete structured data export
+- **🔗 Working Internal Links** - Links convert properly in all export formats
+
+### User Interface
+- **📱 Fully Responsive** - Optimized for desktop, tablet, and mobile
+- **📖 Bookmarklet** - Quick-capture web pages directly to your Zettelkasten
+- **⌨️ Autocomplete** - Smart tag and note ID suggestions
+- **📄 Pagination** - Configurable notes per page
+- **🎨 Clean Design** - Modern, distraction-free interface
+
+### Security
+- **🔐 Password Authentication** - Bcrypt password hashing
+- **🛡️ CSRF Protection** - Token-based request validation
+- **⏱️ Session Management** - Automatic timeout after inactivity
+- **🔒 Rate Limiting** - Login attempt throttling
+- **📁 File Access Control** - Protected data directories
+
+## 🚀 Installation
 
 ### Requirements
-
 - PHP 7.4 or higher
-- Web server (Apache, Nginx, or PHP built-in server)
-- [Parsedown](https://parsedown.org/) library for Markdown rendering
+- Web server (Apache with mod_rewrite or Nginx)
+- Write permissions for the `zettels/` directory
 
-### Installation
+### Quick Setup
 
-1. **Clone the repository**
-   ```
-   git clone https://github.com/yourusername/zettelkasten-php.git
-   cd zettelkasten-php
+1. **Upload files to your web server:**
+   ```bash
+   /your-domain.com/zettelkasten/
+   ├── index.php
+   ├── login.php
+   ├── logout.php
+   ├── export.php
+   ├── config.php
+   ├── styles.css
+   ├── jquery-ui-autocomplete.css
+   ├── Parsedown.php
+   ├── .htaccess
+   └── zettels/ (create this directory)
    ```
 
-2. **Download Parsedown**
-   ```
-   wget https://raw.githubusercontent.com/erusev/parsedown/master/Parsedown.php
-   ```
-
-3. **Create required directories**
-   ```
+2. **Create the zettels directory:**
+   ```bash
    mkdir zettels
    chmod 755 zettels
    ```
 
-5. **Open in browser**
-   
+3. **Configure your credentials in `config.php`:**
+   ```php
+   define('USERNAME', 'your_username');
+   define('PASSWORD_HASH', '$2y$10$...');  // See below
    ```
 
-That's it! You're ready to start creating notes.
+4. **Generate a password hash:**
+   ```bash
+   php -r "echo password_hash('your_password', PASSWORD_DEFAULT);"
+   ```
+   Copy the output and paste it as the `PASSWORD_HASH` value.
 
-## 📖 Usage
+5. **Set proper file permissions:**
+   ```bash
+   chmod 600 config.php  # Protect config file
+   chmod 755 zettels     # Allow writing notes
+   ```
 
-### Creating a Note
+6. **Access your Zettelkasten:**
+   Navigate to `https://your-domain.com/zettelkasten/`
 
-1. Fill in the "Create New Zettel" form
-2. Write content in Markdown format
-3. Add comma-separated tags (with autocomplete)
-4. Optionally link to other notes by their IDs
-5. Click "Create Zettel"
+## 📖 Usage Guide
 
-### Linking Notes
+### Creating Notes
 
-Use double brackets to link to other notes:
+1. Click the **"➕ Create New Zettel"** button
+2. Enter a title and content (Markdown supported)
+3. Add tags (comma-separated): `philosophy, productivity, ideas`
+4. Link to other notes using their IDs: `abc123, def456`
+5. Use internal linking in content: `[[abc123]]` links to note ID abc123
+
+### Markdown Syntax
+
+```markdown
+# Heading 1
+## Heading 2
+
+**Bold text** and *italic text*
+
+- Bullet list
+- Another item
+
+1. Numbered list
+2. Another item
+
+[External link](https://example.com)
+[[abc123]] - Internal link to note
+
+> Blockquote
+
+`inline code`
+
 ```
-This note relates to [[67123abc45d]] and [[67123def890]].
+Code block
+```
 ```
 
-The IDs will be automatically converted to clickable links showing the note titles.
+### Internal Linking
 
-### Using the Bookmarklet
+Use `[[note_id]]` in your content to link to other notes:
+```markdown
+This connects to my note about [[67890abcd]] and also [[12345efgh]].
+```
 
-1. Drag the "➕ Add to Zettelkasten" link from the top section to your browser's bookmarks bar
-2. Visit any webpage you want to save
-3. Click the bookmarklet
-4. A popup opens with the URL and page title pre-filled
-5. Add your notes and tags, then save
+The system will automatically convert these to clickable links with the note title.
+
+### Making a Sticky Note (Index Page)
+
+1. Find the note you want to pin
+2. Click **"📌 Make Sticky"**
+3. The note will appear at the top of your main page
+4. Click **"📍 Unpin"** to remove it
 
 ### Searching
 
-- Use the search bar to find notes by title, content, or tags
-- Click any tag to see all notes with that tag
-- Search results are ranked by relevance
+- Use the search bar to find notes
+- Search matches whole words only (searching "book" won't match "Facebook")
+- Results are ranked by relevance:
+  - Title matches: 3 points
+  - Content matches: 2 points
+  - Tag matches: 1 point
 
-### Advanced Features
+### Exporting Notes
 
-- **View Details** - Click to see backlinks, related notes, and similar notes
-- **Edit Mode** - Modify existing notes with autocomplete for tags and links
-- **Pagination** - Navigate through large note collections (10 per page)
+1. Click **"📥 Export"** in the header
+2. Select notes to export (or keep all selected)
+3. Choose format:
+   - **Single Markdown**: One file with table of contents
+   - **ZIP Archive**: Individual .md files for each note
+   - **JSON Backup**: Complete data backup
 
-## 🎨 Customization
+### Bookmarklet Setup
 
-### Changing Colors
+1. Drag the **"➕ Add to Zettelkasten"** link to your bookmarks bar
+2. When browsing, click the bookmarklet
+3. A popup opens with the page URL and title pre-filled
+4. Add your notes and save
 
-Edit `styles.css` to customize the color scheme:
-- Primary color: `#2c3e50`
-- Accent color: `#3498db`
-- Success color: `#27ae60`
-- Warning color: `#f39c12`
+### Random Note Discovery
 
-### Adjusting Pagination
+Click the **"🎲 Random Note"** button to view a random note from your collection. Great for:
+- Reviewing old notes
+- Finding forgotten connections
+- Serendipitous rediscovery
 
-In `zettelkasten.php`, change:
-```
-$perPage = 10; // Change to your preferred number
-```
+## ⚙️ Configuration
 
-## 📁 File Structure
+Edit `config.php` to customize:
 
-```
-zettelkasten-php/
-├── zettelkasten.php    # Main application file
-├── styles.css          # Stylesheet
-├── Parsedown.php       # Markdown parser (download separately)
-├── zettels/            # Directory for note storage (auto-created)
-│   ├── 671234abcd.txt
-│   └── 671235efgh.txt
-└── README.md
-```
+```php
+// Session timeout (2 hours default)
+define('SESSION_TIMEOUT', 60 * 60 * 2);
 
-Each note is stored as a JSON file with the following structure:
-```
-{
-    "id": "671234abcd",
-    "title": "Note Title",
-    "content": "Note content in Markdown",
-    "tags": ["tag1", "tag2"],
-    "links": ["other_note_id"],
-    "created_at": "2025-10-11 20:00:00",
-    "updated_at": "2025-10-11 20:30:00"
-}
+// Notes per page
+define('ZETTELS_PER_PAGE', 10);
+
+// Related notes shown
+define('RELATED_ZETTELS_LIMIT', 5);
+
+// Login security
+define('MAX_LOGIN_ATTEMPTS', 5);
+define('LOGIN_LOCKOUT_TIME', 900); // 15 minutes
+
+// Debug mode (set to false in production)
+define('APP_DEBUG', false);
 ```
 
 ## 🔒 Security Features
 
-- **CSRF Protection** - All forms use tokens to prevent cross-site request forgery
-- **XSS Prevention** - All output is properly escaped using `htmlspecialchars()`
-- **Input Validation** - Tags and IDs are sanitized with regex patterns
-- **File Locking** - Prevents concurrent write conflicts
-- **Path Traversal Protection** - ID validation prevents unauthorized directory access
+### Authentication
+- Bcrypt password hashing (cost factor 10)
+- Session timeout after inactivity
+- Login attempt rate limiting
+- Session regeneration on login
 
+### CSRF Protection
+- Token-based request validation
+- Token expiration after 6 hours
+- Automatic token regeneration
 
+### File Security (via .htaccess)
+- Prevents direct access to `.txt` data files
+- Blocks access to `config.php`
+- Prevents PHP execution in `zettels/` directory
+- Blocks access to hidden files (`.htaccess`, `.git`, etc.)
 
-## 🙏 Acknowledgments
+### Best Practices
+1. Use HTTPS (SSL/TLS) for your domain
+2. Keep `config.php` outside the web root if possible
+3. Regularly backup your `zettels/` directory
+4. Use a strong password
+5. Keep PHP updated
 
-- [Parsedown](https://parsedown.org/) - Markdown parser for PHP
-- [jQuery UI](https://jqueryui.com/) - Autocomplete functionality
-- Inspired by [Niklas Luhmann's Zettelkasten method](https://en.wikipedia.org/wiki/Zettelkasten)
+## 📁 File Structure
 
+```
+zettelkasten/
+├── index.php              # Main application
+├── login.php             # Authentication
+├── logout.php            # Session termination
+├── export.php            # Export functionality
+├── config.php            # Configuration (sensitive!)
+├── styles.css            # Main stylesheet
+├── jquery-ui-autocomplete.css
+├── Parsedown.php         # Markdown parser
+├── .htaccess            # Apache security rules
+├── manifest.json        # PWA manifest (optional)
+├── sw.js               # Service worker (optional)
+└── zettels/            # Note storage directory
+    ├── .tag_cache.json        # Tag cache (auto-generated)
+    ├── .sticky_zettel.txt     # Sticky note ID (auto-generated)
+    └── [note_id].txt          # Individual notes (JSON format)
+```
 
-Just copy everything including the quadruple backticks at the beginning and end. When you paste it into your README.md file on GitHub, remove the outer quadruple backticks and keep only the content inside. This is the standard way to escape code blocks within documentation!
+## 🛠️ Troubleshooting
+
+### Login Issues
+- **Wrong password**: Use the password hash generator command
+- **Locked out**: Wait 15 minutes or delete session files
+- **Session expires quickly**: Check `SESSION_TIMEOUT` in config
+
+### Notes Not Saving
+- Check `zettels/` directory permissions (755)
+- Verify web server can write to the directory
+- Check PHP error logs
+
+### Internal Links Not Working
+- Ensure you're using the correct note ID format: `[[abc123]]`
+- IDs are alphanumeric only (no spaces or special characters)
+- Check that the target note exists
+
+### Export Issues
+- **ZIP not working**: Ensure PHP ZipArchive extension is enabled
+- **Large exports timing out**: Increase PHP `max_execution_time`
+- **Memory errors**: Increase PHP `memory_limit`
+
+### Mobile Display Issues
+- Clear browser cache (Ctrl+Shift+R or Cmd+Shift+R)
+- Check that `styles.css` is loading properly
+- Verify viewport meta tag is present
+
+## 🎨 Customization
+
+### Changing Colors
+Edit `styles.css` to modify the color scheme. Main colors:
+- Primary: `#3498db` (blue)
+- Success: `#27ae60` (green)
+- Warning: `#f39c12` (orange)
+- Danger: `#e74c3c` (red)
+- Purple: `#9b59b6` (random button)
+- Teal: `#16a085` (export button)
+
+### Adding Custom Styles
+Add your custom CSS at the bottom of `styles.css`:
+```css
+/* My custom styles */
+.zettel {
+    /* Your modifications */
+}
+```
+
+## 📊 Data Format
+
+Notes are stored as JSON files in the `zettels/` directory:
+
+```json
+{
+    "id": "67890abcd",
+    "title": "My Note Title",
+    "content": "Note content with [[12345efgh]] internal links",
+    "tags": ["productivity", "ideas"],
+    "links": ["12345efgh"],
+    "created_at": "2025-01-15 10:30:00",
+    "updated_at": "2025-01-15 14:20:00"
+}
+```
+
+## 🔄 Backup & Migration
+
+### Manual Backup
+```bash
+# Backup all notes
+tar -czf zettelkasten-backup-$(date +%Y%m%d).tar.gz zettels/
+
+# Backup including config
+tar -czf zettelkasten-full-backup-$(date +%Y%m%d).tar.gz \
+  zettels/ config.php
+```
+
+### Migration to Other Systems
+1. Use the **ZIP Export** feature
+2. Each note becomes a `.md` file
+3. Internal links use standard markdown: `[Note Title](note_id.md)`
+4. Compatible with Obsidian, Logseq, and other markdown tools
+
+## 📚 Zettelkasten Method
+
+This system implements the Zettelkasten (slip-box) method:
+
+1. **Atomic Notes**: Each note contains one idea
+2. **Linking**: Connect related ideas with internal links
+3. **Tags**: Categorize for easy retrieval
+4. **Emergence**: Let structure emerge organically through connections
+5. **Progressive Summarization**: Create index notes (sticky notes) for overviews
+
+### Tips for Effective Use
+- Write in your own words
+- Link liberally - connections spark insights
+- Review random notes regularly
+- Create structure notes (sticky) as topics develop
+- Tag consistently but don't over-categorize
+- Focus on ideas, not just collecting information
+
+## 🆘 Support & Contributing
+
+### Getting Help
+- Check this README first
+- Review your PHP error logs
+- Check file permissions
+- Verify configuration settings
+
+### Feature Requests
+This is a personal/self-hosted project. Feel free to modify the code to add features you need!
+
+## 📜 License
+
+This project is provided as-is for personal use. Modify and customize as needed for your requirements.
+
+## 🙏 Credits
+
+- **Markdown Parser**: [Parsedown](https://parsedown.org/)
+- **Autocomplete**: jQuery UI
+- **Method**: Based on Niklas Luhmann's Zettelkasten system
+- **Design**: Custom responsive design
+
+## 📝 Version History
+
+### v1.0 (Current)
+- ✅ Sticky/Index note functionality
+- ✅ Random note discovery
+- ✅ Export in multiple formats (MD, ZIP, JSON)
+- ✅ Improved whole-word search
+- ✅ Fully responsive mobile design
+- ✅ Enhanced security features
+- ✅ Bookmarklet for quick capture
+
+### v0.1 (Initial)
+- Basic note creation and editing
+- Markdown support
+- Internal linking
+- Tag system
+- Search functionality
+- Authentication
+
+e base, one atomic note at a time.
