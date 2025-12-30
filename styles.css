@@ -12,8 +12,12 @@ h3 { color: #7f8c8d; margin-top: 20px; margin-bottom: 10px; font-size: 1.1em; }
     justify-content: space-between;
     align-items: center;
     margin-bottom: 20px;
-    flex-wrap: wrap;
     gap: 15px;
+}
+
+.header-section h1 {
+    margin: 0;
+    flex-shrink: 0;
 }
 
 .header-actions {
@@ -21,6 +25,7 @@ h3 { color: #7f8c8d; margin-top: 20px; margin-bottom: 10px; font-size: 1.1em; }
     align-items: center;
     gap: 10px;
     flex-wrap: wrap;
+    justify-content: flex-end;
 }
 
 /* Standardized button styling - BASE CLASS */
@@ -32,7 +37,7 @@ h3 { color: #7f8c8d; margin-top: 20px; margin-bottom: 10px; font-size: 1.1em; }
     border: none;
     border-radius: 4px;
     cursor: pointer;
-    text-decoration: none;
+    text-decoration: none !important;
     font-size: 0.9em;
     font-weight: 600;
     font-family: inherit;
@@ -40,6 +45,11 @@ h3 { color: #7f8c8d; margin-top: 20px; margin-bottom: 10px; font-size: 1.1em; }
     transition: all 0.3s ease;
     white-space: nowrap;
     min-height: 36px;
+}
+
+/* Remove underline from button links on hover too */
+.btn:hover {
+    text-decoration: none !important;
 }
 
 /* Random note button */
@@ -53,6 +63,19 @@ h3 { color: #7f8c8d; margin-top: 20px; margin-bottom: 10px; font-size: 1.1em; }
     background: linear-gradient(135deg, #8e44ad, #732d91);
     transform: translateY(-1px);
     box-shadow: 0 4px 12px rgba(155, 89, 182, 0.4);
+}
+
+/* Export button */
+.btn-export-link {
+    background: linear-gradient(135deg, #16a085, #138f75);
+    color: white;
+    box-shadow: 0 2px 8px rgba(22, 160, 133, 0.3);
+}
+
+.btn-export-link:hover {
+    background: linear-gradient(135deg, #138f75, #117a65);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(22, 160, 133, 0.4);
 }
 
 /* Logout button */
@@ -523,29 +546,160 @@ a,
 
 @media (max-width: 768px) {
     body { padding: 10px; }
-    .search-form { flex-direction: column; }
-    .zettel-header { flex-direction: column; }
+    
+    /* Header adjustments */
+    .header-section { 
+        flex-direction: column; 
+        align-items: stretch;
+        gap: 15px;
+    }
+    
+    .header-section h1 {
+        text-align: center;
+        font-size: 1.5em;
+    }
+    
+    .header-actions { 
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+    }
+    
+    .header-actions > * {
+        width: 100%;
+        justify-content: center;
+        text-align: center;
+    }
+    
+    .header-actions span {
+        display: block;
+        text-align: center;
+        padding: 8px;
+        margin: 0 !important;
+    }
+    
+    /* Sticky badge - prevent wrapping */
+    .sticky-badge {
+        font-size: 0.85em;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 100%;
+    }
+    
+    /* Search form */
+    .search-form { 
+        flex-direction: column; 
+    }
+    
+    .search-form input,
+    .search-form button,
+    .search-form a {
+        width: 100%;
+    }
+    
+    /* Zettel cards */
+    .zettel { 
+        padding: 15px; 
+    }
+    
+    .zettel-header { 
+        flex-direction: column; 
+    }
+    
+    .zettel-title {
+        font-size: 1.3em;
+    }
+    
     .zettel-actions { 
         flex-direction: column; 
         align-items: stretch;
     }
+    
     .zettel-actions button,
-    .zettel-actions a {
+    .zettel-actions a,
+    .zettel-actions form {
         width: 100%;
-        justify-content: center;
     }
-    .header-section { 
-        flex-direction: column; 
-        align-items: flex-start; 
-    }
-    .header-actions { 
-        width: 100%; 
-        justify-content: flex-start;
-        flex-direction: column;
-        align-items: stretch;
-    }
-    .header-actions > * {
+    
+    .zettel-actions form button {
         width: 100%;
-        justify-content: center;
+    }
+    
+    /* Bookmarklet section */
+    .bookmarklet-section {
+        padding: 15px;
+    }
+    
+    .bookmarklet-section h3 {
+        font-size: 1em;
+    }
+    
+    /* Tag cloud */
+    .tag-cloud {
+        padding: 10px;
+    }
+    
+    .tag-cloud a {
+        font-size: 0.85em;
+        margin: 3px;
+        padding: 4px 8px;
+    }
+    
+    /* Create button */
+    .btn-create-new {
+        padding: 12px 30px;
+        font-size: 1em;
+    }
+    
+    /* Pagination */
+    .pagination {
+        gap: 5px;
+    }
+    
+    .pagination a,
+    .pagination span {
+        padding: 6px 10px;
+        font-size: 0.9em;
+    }
+    
+    /* Modal adjustments */
+    .modal-content {
+        width: 95%;
+        margin: 10% auto;
+        padding: 20px;
+    }
+    
+    /* Edit forms */
+    .edit-form {
+        padding: 15px;
+    }
+}
+
+/* Extra small screens */
+@media (max-width: 480px) {
+    body {
+        padding: 5px;
+    }
+    
+    .header-section h1 {
+        font-size: 1.3em;
+    }
+    
+    .zettel {
+        padding: 12px;
+    }
+    
+    .zettel-title {
+        font-size: 1.2em;
+    }
+    
+    .btn-create-new {
+        padding: 10px 20px;
+        font-size: 0.95em;
+    }
+    
+    .sticky-badge {
+        font-size: 0.8em;
     }
 }
