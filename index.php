@@ -81,7 +81,7 @@ if (APP_DEBUG && $_SERVER['REQUEST_METHOD'] === 'POST') {
 // Initialize Parsedown for Markdown rendering
 require_once 'Parsedown.php';
 $parsedown = new Parsedown();
-$parsedown->setSafeMode(false);
+$parsedown->setSafeMode(true);
 $parsedown->setBreaksEnabled(true);
 
 // Ensure zettels directory exists
